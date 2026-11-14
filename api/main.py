@@ -23,7 +23,7 @@ FIELD_NAMES = {"base": "base", "stops": "stops", "slope_limit": "slope limit", "
                "o2_reserve": "oxygen reserve", "walk_speed_kmh": "walking speed", "ls": "season (Ls)",
                "start_ltst_h": "start time", "base_antenna_m": "base antenna height",
                "suit_antenna_m": "suit antenna height", "stop_minutes": "time at each stop", "lonlat": "position", "finding": "finding",
-               "radius_m": "radius", "lon": "longitude", "lat": "latitude", "observations": "helicopter reports",
+               "radius_m": "radius", "n": "number of stops", "m_per_px": "photo resolution", "lon": "longitude", "lat": "latitude", "observations": "helicopter reports",
                "sol": "sol", "ltst_h": "local time", "step": "step", "x": "x", "y": "y"}
 
 
@@ -212,6 +212,8 @@ def site_info(site_id: str = Query("jezero", alias="site")):
             "has_ground_types": s.ground is not None and bool(s.ground.any()),
             "has_slope_error": s.slope_err is not None,
             "has_minerals": getattr(s, "minerals", None) is not None,
+            "has_photo": _photo(site_id) is not None,
+            "has_rover_track": _rover(site_id) is not None,
             "sun_check": s.body == "mars",
             "crs": s.crs,
             "extent_xy": {"left": s.x0, "top": s.y0, "right": s.x0 + s.a * s.zone.shape[1],
@@ -306,9 +308,25 @@ def weather(ls: float = num_q(ge=0, lt=360)):
     return {"season": SEASONS[k][1], "units": w["units"], "source": w["source"],
             "hours": list(range(24)), **w["seasons"][str(k)],
             "note": "typical conditions, not a forecast; hours are Mars local solar time",
+            "sky": _dust_sky(ls),
             "wind_note": (None if any(v is not None for v in w["seasons"][str(k)]["wind"]["mean"]) else
                           "no wind data for this season: MEDA's wind sensors were damaged by wind-blown sand "
                           "after sol 313 and processed wind is only published for earlier sols")}
+
+
+def _dust_sky(ls):
+    from pipeline.dust import sky
+    return sky(ls)
+
+
+@app.get("/api/dust")
+def dust_year():
+    """How hazy the sky over Jezero is through the Mars year (optical depth from Perseverance's Mastcam-Z)."""
+    from pipeline.dust import load
+    t = load()
+    if t is None:
+        raise HTTPException(503, "Dust table not built yet (python -m pipeline.dust).")
+    return t
 
 
 @app.get("/api/sol_to_ls")
@@ -356,6 +374,32 @@ def minerals_legend():
             "source": "Parente, Saranathan, Itoh, Tarnas, Seelos, Mustard (2021), Zenodo 10.5281/zenodo.5575824, CC BY 4.0"}
 
 
+@app.get("/api/science_stops")
+def science_stops(lon: float = num_q(), lat: float = num_q(), site_id: str = Query("jezero", alias="site"),
+                  n: int = Query(5, ge=1, le=10), slope_limit: Optional[float] = num_q(None, ge=5, le=35),
+                  o2_hours: Optional[float] = num_q(None, gt=0, le=24), o2_reserve: Optional[float] = num_q(None, ge=0, lt=1),
+                  walk_speed_kmh: Optional[float] = num_q(None, gt=0, le=10),
+                  stop_minutes: Optional[float] = num_q(None, ge=0, le=480)):
+    """Mineral spots worth a stop that you can reach from this base and get back from on your oxygen."""
+    from pipeline.minerals import CAVEAT
+    from planner.science import suggest
+    s = site(slope_limit, site_id).with_settings(o2_hours=o2_hours, o2_reserve=o2_reserve,
+                                                walk_speed_kmh=walk_speed_kmh, stop_minutes=stop_minutes)
+    if getattr(s, "minerals", None) is None:
+        raise HTTPException(404, "No mineral map for this site, so no science stops to suggest.")
+    cell_of(s, lon, lat, "base")
+    try:
+        stops = suggest(s, (lon, lat), n=n)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"stops": stops, "caveat": CAVEAT,
+            "note": "Each stop fits your oxygen on its own (walk there, time at the stop, walk back). "
+                    "Add the ones you want and plan the trip to see if they fit together. "
+                    "Only high-confidence patches at least two mineral-map pixels big are suggested.",
+            "source": "CRISM mineral map: Parente, Saranathan, Itoh, Tarnas, Seelos, Mustard (2021), "
+                      "Zenodo 10.5281/zenodo.5575824, CC BY 4.0"}
+
+
 @app.get("/api/layers/minerals.png")
 def minerals_layer(site_id: str = Query("jezero", alias="site")):
     if getattr(site(None, site_id), "minerals", None) is None:
@@ -373,6 +417,60 @@ def _minerals_png(name) -> bytes:
         rgba[m == i] = (*hi, 200)
         rgba[m == 100 + i] = (*med, 150)
     return png_bytes(rgba)
+
+
+@lru_cache(maxsize=len(SITES))
+def _rover(name):
+    from pipeline import rover
+    track = rover.load(name)
+    if track is None:
+        return None
+    return {**track, **rover.summary(site(None, name), track),
+            "note": "The rover drove this ground safely, so it is ground truth for our map. A rover is not a "
+                    "person on foot: this proves the map's slopes, not the walking limits."}
+
+
+@app.get("/api/rover")
+def rover_track(site_id: str = Query("jezero", alias="site")):
+    """Perseverance's real drive inside the map, its stops with the tilt it measured, and what our map says there."""
+    site(None, site_id)  # 404 if unknown
+    r = _rover(site_id)
+    if r is None:
+        raise HTTPException(404, "No rover track for this site.")
+    return r
+
+
+@lru_cache(maxsize=len(SITES))
+def _photo(name):
+    from pipeline import photo
+    return photo.load(name)
+
+
+@lru_cache(maxsize=6)
+def _photo_jpg(name, m_per_px) -> bytes:
+    from pipeline import photo
+    g = _photo(name)
+    k = int(round(m_per_px / photo.OUT_M))
+    if k > 1:
+        g = photo.block_mean(g, k)
+    buf = io.BytesIO()
+    Image.fromarray(g, "L").save(buf, "JPEG", quality=88, optimize=True)
+    return buf.getvalue()
+
+
+@app.get("/api/layers/photo.jpg")
+def photo_layer(m_per_px: int = Query(2, description="meters per pixel: 1, 2 or 4"),
+                site_id: str = Query("jezero", alias="site")):
+    """The real orbital photo of the ground (HiRISE), on exactly the same box as every other layer."""
+    site(None, site_id)  # 404 if unknown
+    if m_per_px not in (1, 2, 4):
+        raise HTTPException(422, "The photo comes at 1, 2 or 4 meters per pixel.")
+    if _photo(site_id) is None:
+        raise HTTPException(404, "No photo for this site.")
+    from pipeline.photo import SOURCE
+    return Response(_photo_jpg(site_id, m_per_px), media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400", "X-Source": SOURCE,
+                             "Access-Control-Expose-Headers": "X-Source"})
 
 
 @app.get("/api/layers/hillshade.png")

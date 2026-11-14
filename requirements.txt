@@ -10,3 +10,4 @@ pillow
 geopandas
 pyogrio
 pyproj
+scipy

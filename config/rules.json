@@ -26,5 +26,6 @@
   "base_antenna_m": 3.0,
   "suit_antenna_m": 2.0,
   "stop_minutes": 15,
-  "_stop_minutes_note": "default time spent working at each stop; the user sets their own"
+  "_stop_minutes_note": "default time spent working at each stop; the user sets their own",
+  "climb_ignore_below_m": 0.5
 }
