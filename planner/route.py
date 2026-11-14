@@ -1,4 +1,5 @@
 """Safest walking route: base -> stops (best order) -> base."""
+import copy
 import itertools
 import math
 from pathlib import Path
@@ -7,6 +8,7 @@ import numpy as np
 from skimage.graph import MCP_Geometric
 
 from pipeline.costmap import CAUTION, NOGO, classify, load_rules, walk_cost
+from pipeline.sun import MARS_HOUR_IN_EARTH_HOURS, dark_at, sun_positions
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,8 +81,63 @@ class Site:
         z = self.zone[p[:, 0], p[:, 1]]
         return float(step.sum()), hours, float(s.max()), int((z == CAUTION).sum())
 
-    def plan(self, base, stops):
-        """base, stops = (lon, lat). Returns the best loop and its numbers."""
+    def with_settings(self, **settings):
+        """Same map, different mission settings (oxygen, reserve, speed). Nothing is copied but the rules."""
+        s = copy.copy(self)
+        s.rules = {**self.rules, **{k: v for k, v in settings.items() if v is not None}}
+        return s
+
+    def light_check(self, cells, elapsed_h, ls_deg, start_ltst_h, near_m=12):
+        """Sun along the walk. The sun moves while you walk, so each point uses the sun
+        at the moment you reach it. Flags stretches that pass close to NO-GO ground
+        that is dark right then: you may not see the drop until you're at it."""
+        p = np.array(cells)
+        lat = float(np.mean([self.cell_to_lonlat(*p[0])[1], self.cell_to_lonlat(*p[-1])[1]]))
+        ltst = start_ltst_h + np.asarray(elapsed_h) / MARS_HOUR_IN_EARTH_HOURS
+        el, az = sun_positions(lat, ls_deg, ltst)
+        dark_here = dark_at(self.height, self.dx, self.dy, p[:, 0], p[:, 1], el, az)
+
+        # NO-GO cells near each route point, and whether any of them are dark at that moment
+        rad = int(round(near_m / min(self.dx, self.dy)))
+        nogo = self.zone == NOGO
+        hidden = np.zeros(len(p), bool)
+        for i, (r, c) in enumerate(p):
+            win = nogo[max(r - rad, 0): r + rad + 1, max(c - rad, 0): c + rad + 1]
+            if not win.any():
+                continue
+            rr, cc = np.nonzero(win)
+            rr, cc = rr + max(r - rad, 0), cc + max(c - rad, 0)
+            n = len(rr)
+            hidden[i] = dark_at(self.height, self.dx, self.dy, rr, cc,
+                                np.full(n, el[i]), np.full(n, az[i])).any()
+
+        # merge into stretches
+        warnings = []
+        i = 0
+        while i < len(p):
+            if hidden[i]:
+                j = i
+                while j + 1 < len(p) and hidden[j + 1]:
+                    j += 1
+                warnings.append({"from": i, "to": j, "lonlat": self.cell_to_lonlat(*p[i]),
+                                 "elapsed_h": round(float(elapsed_h[i]), 2),
+                                 "sun_el": round(float(el[i]), 1),
+                                 "note": "NO-GO ground within 12 m is in shadow here, the drop may be hard to see"})
+                i = j + 1
+            else:
+                i += 1
+        return {
+            "ls": ls_deg, "start_ltst_h": start_ltst_h,
+            "end_ltst_h": round(float(ltst[-1] % 24), 2),
+            "sun_el_start": round(float(el[0]), 1), "sun_el_end": round(float(el[-1]), 1),
+            "low_sun": bool((el < 15).any()), "sunset_before_home": bool((el <= 0).any()),
+            "dark": [bool(x) for x in dark_here],
+            "hidden_hazards": warnings,
+        }
+
+    def plan(self, base, stops, ls_deg=None, start_ltst_h=None):
+        """base, stops = (lon, lat). Returns the best loop and its numbers.
+        Give ls_deg (season) + start_ltst_h (Mars local time you set off) for the sun check."""
         pts = [self.lonlat_to_cell(*base)] + [self.lonlat_to_cell(*s) for s in stops]
         for i, p in enumerate(pts):
             self._check(p, "base" if i == 0 else f"stop {i}")
@@ -133,8 +190,16 @@ class Site:
             "max_slope": max(l["max_slope"] for l in legs),
             "o2_ok": hours <= usable,
             "o2_margin_h": round(usable - hours, 2),
+            "settings": {k: self.rules[k] for k in ("o2_hours", "o2_reserve", "walk_speed_kmh")},
+            "usable_o2_h": round(usable, 2),
             "point_of_no_return": ponr,
             "margin_h": [round(float(x), 2) for x in margin],
+            # per point along the path, for the walk-through HUD
+            "elapsed_h": [round(float(x), 3) for x in elapsed],
+            "home_h": [round(float(x), 3) if np.isfinite(x) else None for x in back],
+            "slope_deg": [round(float(x), 1) if np.isfinite(x) else None for x in s],
+            "light": (self.light_check(full, elapsed, ls_deg, start_ltst_h)
+                      if ls_deg is not None and start_ltst_h is not None else None),
             "legs": legs,
             "path": [self.cell_to_lonlat(r, c) for r, c in full],
         }

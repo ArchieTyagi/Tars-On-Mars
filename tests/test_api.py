@@ -41,3 +41,32 @@ def test_point_lookup():
     j = c.get(f"/api/point?lon={BASE[0]}&lat={BASE[1]}").json()
     assert j["inside"] and j["zone"] == "GO" and -2700 < j["height_m"] < -2400
     assert c.get("/api/point?lon=10&lat=10").json() == {"inside": False}
+
+
+def test_mission_settings_change_the_answer():
+    body = {"base": BASE, "stops": [[77.46, 18.47]]}
+    a = c.post("/api/plan", json=body).json()
+    b = c.post("/api/plan", json={**body, "o2_hours": 2, "o2_reserve": 0.5}).json()
+    assert a["settings"]["o2_hours"] == 8 and b["settings"]["o2_hours"] == 2
+    assert b["usable_o2_h"] == 1.0 and b["o2_margin_h"] < a["o2_margin_h"]
+    slow = c.post("/api/plan", json={**body, "walk_speed_kmh": 1}).json()
+    assert abs(slow["hours"] - 2 * a["hours"]) < 0.05  # half the speed, double the time
+    assert c.post("/api/plan", json={**body, "o2_reserve": 1.5}).status_code == 422
+
+
+def test_terrain_grid():
+    r = c.get("/api/terrain?step=5")
+    rows, cols = int(r.headers["X-Rows"]), int(r.headers["X-Cols"])
+    assert rows == cols == 250 and len(r.content) == rows * cols * 4
+    assert abs(float(r.headers["X-Dx-M"]) - 20 * 0.9486) < 0.05
+
+
+def test_sun_check_in_plan():
+    body = {"base": BASE, "stops": [[77.46, 18.47]]}
+    assert c.post("/api/plan", json=body).json()["light"] is None
+    late = c.post("/api/plan", json={**body, "ls": 0, "start_ltst_h": 17.5}).json()["light"]
+    assert late["sunset_before_home"] and late["start_ltst_h"] == 17.5
+    noon = c.post("/api/plan", json={**body, "ls": 0, "start_ltst_h": 11}).json()["light"]
+    assert not noon["sunset_before_home"] and not noon["low_sun"]
+    s = c.get("/api/sun?ls=0&ltst_h=12").json()
+    assert s["up"] and abs(s["elevation_deg"] - (90 - 18.455)) < 0.1
