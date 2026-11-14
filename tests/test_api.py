@@ -50,7 +50,8 @@ def test_mission_settings_change_the_answer():
     assert a["settings"]["o2_hours"] == 8 and b["settings"]["o2_hours"] == 2
     assert b["usable_o2_h"] == 1.0 and b["o2_margin_h"] < a["o2_margin_h"]
     slow = c.post("/api/plan", json={**body, "walk_speed_kmh": 1}).json()
-    assert abs(slow["hours"] - 2 * a["hours"]) < 0.05  # half the speed, double the time
+    assert abs(slow["walk_hours"] - 2 * a["walk_hours"]) < 0.05  # half the speed, double the walking time
+    assert slow["stop_hours"] == a["stop_hours"]  # time at the stops does not change
     assert c.post("/api/plan", json={**body, "o2_reserve": 1.5}).status_code == 422
 
 
@@ -141,3 +142,21 @@ def test_convert_round_trip():
     xy = c.get(f"/api/convert?lon={BASE[0]}&lat={BASE[1]}").json()
     ll = c.get(f"/api/convert?x={xy['x']}&y={xy['y']}").json()
     assert abs(ll["lon"] - BASE[0]) < 1e-9 and abs(ll["lat"] - BASE[1]) < 1e-9
+
+
+def test_time_at_stops_counts_against_oxygen():
+    body = {"base": BASE, "stops": [[77.46, 18.47], [77.43, 18.455]]}
+    a = c.post("/api/plan", json={**body, "stop_minutes": 0}).json()
+    b = c.post("/api/plan", json={**body, "stop_minutes": 60}).json()
+    assert abs(b["hours"] - (b["walk_hours"] + 2.0)) < 0.02 and b["stop_hours"] == 2.0
+    assert abs(b["o2_margin_h"] - (a["o2_margin_h"] - 2.0)) < 0.02
+    assert abs(b["elapsed_h"][-1] - a["elapsed_h"][-1] - 2.0) < 0.01
+    first = b["stop_arrivals"][0]
+    assert abs(first["leave_h"] - first["arrive_h"] - 1.0) < 0.01
+
+
+def test_night_start_is_not_called_sunset():
+    j = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47]], "ls": 0, "start_ltst_h": 2}).json()
+    assert j["light"]["starts_in_dark"] and not j["light"]["sunset_before_home"]
+    k = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47]], "ls": 0, "start_ltst_h": 16.5}).json()
+    assert k["light"]["sunset_before_home"] and not k["light"]["starts_in_dark"]

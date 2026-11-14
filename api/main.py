@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 FIELD_NAMES = {"base": "base", "stops": "stops", "slope_limit": "slope limit", "o2_hours": "oxygen supply",
                "o2_reserve": "oxygen reserve", "walk_speed_kmh": "walking speed", "ls": "season (Ls)",
                "start_ltst_h": "start time", "base_antenna_m": "base antenna height",
-               "suit_antenna_m": "suit antenna height", "lonlat": "position", "finding": "finding",
+               "suit_antenna_m": "suit antenna height", "stop_minutes": "time at each stop", "lonlat": "position", "finding": "finding",
                "radius_m": "radius", "lon": "longitude", "lat": "latitude", "observations": "helicopter reports",
                "sol": "sol", "ltst_h": "local time", "step": "step", "x": "x", "y": "y"}
 
@@ -160,6 +160,7 @@ class PlanIn(BaseModel):
     o2_hours: Optional[Num] = Field(None, gt=0, le=24, description="suit oxygen supply, hours")
     o2_reserve: Optional[Num] = Field(None, ge=0, lt=1, description="share kept untouched, 0.25 = 25%")
     walk_speed_kmh: Optional[Num] = Field(None, gt=0, le=10)
+    stop_minutes: Optional[Num] = Field(None, ge=0, le=480, description="time spent working at each stop")
     # radio line-of-sight: antenna heights above ground
     base_antenna_m: Optional[Num] = Field(None, ge=0, le=100)
     suit_antenna_m: Optional[Num] = Field(None, ge=0, le=10)
@@ -233,7 +234,7 @@ def plan(req: PlanIn):
         from planner.scout import apply_observations
         s = apply_observations(s, obs)
     s = s.with_settings(
-        o2_hours=req.o2_hours, o2_reserve=req.o2_reserve, walk_speed_kmh=req.walk_speed_kmh,
+        o2_hours=req.o2_hours, o2_reserve=req.o2_reserve, walk_speed_kmh=req.walk_speed_kmh, stop_minutes=req.stop_minutes,
         base_antenna_m=req.base_antenna_m, suit_antenna_m=req.suit_antenna_m)
     try:
         r = s.plan(tuple(req.base), [tuple(p) for p in req.stops], ls_deg=req.ls, start_ltst_h=req.start_ltst_h)
@@ -392,9 +393,11 @@ def _hillshade_png(name) -> bytes:
 @app.get("/api/layers/safe_range.png")
 def safe_range(lon: float = num_q(), lat: float = num_q(), site_id: str = Query("jezero", alias="site"),
                slope_limit: Optional[float] = num_q(None, ge=5, le=35), o2_hours: Optional[float] = num_q(None, gt=0, le=24),
-               o2_reserve: Optional[float] = num_q(None, ge=0, lt=1), walk_speed_kmh: Optional[float] = num_q(None, gt=0, le=10)):
+               o2_reserve: Optional[float] = num_q(None, ge=0, lt=1), walk_speed_kmh: Optional[float] = num_q(None, gt=0, le=10),
+               stop_minutes: Optional[float] = num_q(None, ge=0, le=480)):
     """Where you can walk to AND get back from, with the same mission settings as the plan."""
-    s = site(slope_limit, site_id).with_settings(o2_hours=o2_hours, o2_reserve=o2_reserve, walk_speed_kmh=walk_speed_kmh)
+    s = site(slope_limit, site_id).with_settings(o2_hours=o2_hours, o2_reserve=o2_reserve, walk_speed_kmh=walk_speed_kmh,
+                                                stop_minutes=stop_minutes)
     cell_of(s, lon, lat, "base")
     try:
         s._check(s.lonlat_to_cell(lon, lat), "base")
