@@ -25,7 +25,8 @@ Things that are true everywhere:
 | `/api/convert` | lon/lat to map meters and back. Needed to draw the Moon site (see the Moon note) |
 | `/api/plan` | the route planner (POST). The main call, described below |
 | `/api/science_stops` | mineral spots worth a stop that you can reach on your oxygen. Needs `lon`, `lat` of the base |
-| `/api/rover` | where Perseverance really drove, its stops, and what our map says there |
+| `/api/rover` | where Perseverance really drove, its stops, and what our map says there. `whole` is the whole drive, also outside the box, for drawing only |
+| `/api/helicopter` | where the Ingenuity helicopter really flew: all 72 flights as lines, with NASA's facts for each. Jezero only |
 | `/api/weather` | typical temperature and wind for every hour of a season, plus the sky. Needs `ls` |
 | `/api/dust` | how hazy the sky is through the Mars year (12 slices) |
 | `/api/sun` | where the sun is. Needs `ls`, `ltst_h` |
@@ -41,6 +42,7 @@ Things that are true everywhere:
 | `/api/layers/slope_risk.png` | looks walkable but could be too steep. Moon only |
 | `/api/layers/safe_range.png` | where you can walk to and back on your oxygen. Needs `lon`, `lat` of the base |
 | `/api/layers/radio.png` | where the suit has direct radio to base. Needs `lon`, `lat` of the base |
+| `/api/layers/context.jpg` | a wider picture of the ground around the planning box. `level` picks which one (see below) |
 
 ## Layers: do not hardcode them
 
@@ -50,6 +52,20 @@ Each entry has `id`, `name`, `about` (one line to show the user), `kind` (`base`
 and `legend` (a list of `color` and `label`).
 
 To place a picture on the map use `bounds` from `/api/site` (`west`, `south`, `east`, `north`).
+
+## The ground around the box: `context`
+
+`/api/site` also returns `context`: wider pictures around the planning box, from far to near. For Jezero that is
+`planet` (all of Mars), `region` (about 237 km around Jezero) and `mosaic` (the 21 km photo mosaic the box is cut from).
+A site with none (the Moon) gives an empty list.
+
+Each entry has `id`, `name`, `url`, `extent_xy` (`left`, `top`, `right`, `bottom` in the same map meters as the
+site's own `extent_xy`, so the pictures stack under the map with no conversion), `m_per_px`, `about`, `note` and `source`.
+
+The planner does not use these pictures. No checked height map is loaded out there, so draw them darkened and tell
+the user that ground is not mapped for walking. A base or stop outside the planning box is still refused by `/api/plan`.
+
+`/api/layers/context.jpg?level=planet` serves one picture. Without `level` you get the nearest one.
 
 ## Planning a route: POST `/api/plan`
 

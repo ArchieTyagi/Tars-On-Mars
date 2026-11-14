@@ -21,6 +21,7 @@ You put down a base and a few stops at Jezero Crater. It finds the safest walkin
 - **Time at stops**: you set how long you work at each stop. It counts toward oxygen, sunset and radio like walking does.
 - **Climb**: height along the route, total climb and descent. Ripples under half a meter are not counted, the height map can't tell them from noise.
 - **Real photo**: the HiRISE photo of the same 5 x 5 km box, as a layer under everything else.
+- **The rest of Mars**: zoom out and you see the 21 km photo mosaic around the box, then the region, then the whole planet. All of it is darkened and marked as not mapped for walking, because we only plan where a checked 1 m height map is loaded.
 - **Rover track**: where Perseverance really drove inside our box (17 km), with its stops and the tilt it measured.
 - **Minerals and science stops**: the CRISM mineral map on our grid. The planner suggests mineral patches you can reach and get back from on your oxygen, water-made minerals first.
 - **Weather**: typical air temperature, ground temperature and wind for your season and hours, from Perseverance's MEDA station. Not a forecast.
@@ -35,6 +36,7 @@ You put down a base and a few stops at Jezero Crater. It finds the safest walkin
 - **Slope against NASA's own**: on the Moon site LOLA publishes its own slope map. Over 10.2 million cells the typical difference from ours is 0.0001 deg, and the two agree on which cells are over 20 deg for 99.999% of them.
 - **Routes against a second solver**: a separate shortest-path solver (scipy Dijkstra) on all 1.56 million cells gives the same costs and the same stop order.
 - **Sun, shadows, radio**: sunrise, sunset and noon height match the textbook formulas, a 10 m test wall casts the right shadow length, and radio over flat ground ends at the horizon distance (8.2 km for a 3 m mast and a 2 m suit antenna).
+- **Backdrop pictures**: inside the box the 21 km backdrop matches our sharp site photo best with no shift at all, and the region picture matches the planet picture the same way. On the web map the box lands on Jezero's longitude and latitude on the planet picture. These are tests (`tests/test_context.py`).
 - **Photo on the height map**: we shade the height map from every sun direction and slide the photo around. The best fit is with the sun in the west and the photo within one 4 m grid square of where it already is.
 - **Heights**: our height at the landing site is -2569.91 m, the rover's own position file says -2569.91 m.
 - **Re-run them**: the slope, second-solver, photo and height checks are one script, `python -m validation.independent_checks` (results in `docs/independent_checks.json`). The sun, shadow and radio checks are in the tests.
@@ -56,7 +58,7 @@ uvicorn api.main:app --reload    # server, docs at http://localhost:8000/docs
 cd frontend && npm install && npm run dev   # app at http://localhost:5173
 ```
 
-The weather, haze and rover tables are small and already in `assets/`. The scripts that made them are `pipeline/weather_fetch.py` + `weather_build.py`, `pipeline/dust.py` and `pipeline/rover.py`. The mineral layer needs `jezeroFinal.tif` from the Zenodo record below in `data/minerals/`, then `python -m pipeline.minerals`. The Moon site needs the LOLA Site01 files in `data/moon/`, then `python -m pipeline.loader moon` and `python -m pipeline.costmap moon`.
+The weather, haze and rover tables and the three backdrop pictures are small and already in `assets/`. The scripts that made them are `pipeline/weather_fetch.py` + `weather_build.py`, `pipeline/dust.py`, `pipeline/rover.py` and `pipeline/context.py` (run it once per level: `python -m pipeline.context jezero planet`, then `region`, then `mosaic`). The mineral layer needs `jezeroFinal.tif` from the Zenodo record below in `data/minerals/`, then `python -m pipeline.minerals`. The Moon site needs the LOLA Site01 files in `data/moon/`, then `python -m pipeline.loader moon` and `python -m pipeline.costmap moon`.
 
 For the web app: `docs/API.md` lists every call and every field.
 
@@ -64,8 +66,10 @@ For the web app: `docs/API.md` lists every call and every field.
 
 - Mars 2020 Terrain Relative Navigation HiRISE DTM mosaic (1 m), Fergason et al. 2020, USGS Astrogeology Science Center, doi:10.5066/P9REJ9JN. Height map.
 - Mars 2020 Terrain Relative Navigation HiRISE Orthorectified Image Mosaic (25 cm), Fergason et al. 2020, USGS Astrogeology Science Center, doi:10.5066/P9QJDP48, CC0. Photo layer. Image data: NASA/JPL/University of Arizona.
+- Mars Viking Colorized Global Mosaic 232m (MDIM 2.1), USGS Astrogeology Science Center, colorized by NASA Ames, public domain. Image data: NASA/JPL/USGS. Only used as the darkened backdrop around the planning box.
 - Sun, V.Z., and Stack, K.M., 2020, Geologic map of Jezero crater and the Nili Planum region, Mars: USGS Scientific Investigations Map 3464. Public domain.
 - Perseverance rover traverse and waypoints (M20_traverse.json, M20_waypoints.json), NASA/JPL-Caltech.
+- Ingenuity helicopter flight paths and waypoints (m20_heli_flight_path.json, m20_heli_waypoints.json), NASA/JPL-Caltech. In the flight path file the lines numbered 12 and 13 are swapped; we pair lines and facts by their length, which is the same number in both files.
 - CRISM mineral map of Jezero: Parente, Saranathan, Itoh, Tarnas, Seelos, Mustard (2021), Zenodo, doi:10.5281/zenodo.5575824, CC BY 4.0. Mineral names are the closest match to known minerals.
 - Perseverance MEDA weather station data (air and ground temperature, wind), Rodriguez-Manfredi et al., NASA Planetary Data System.
 - Mark Lemmon, The Perseverance Rover's Mastcam-Z Visible Aerosol Optical Depth Record, Mendeley Data v2 (2026), doi:10.17632/gktjp9jptb.2, CC BY 4.0. Marked preliminary by the author. Sky haze.
