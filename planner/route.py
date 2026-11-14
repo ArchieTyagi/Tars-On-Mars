@@ -17,13 +17,27 @@ class Site:
     def __init__(self, name="jezero", rules=None):
         d = np.load(ROOT / "data" / name / "layers.npz")
         self.slope, self.rough, self.height = d["slope"], d["rough"], d["height"]
+        self.name = name
         self.a, self.b, self.x0, self.d, self.e, self.y0 = d["transform"]
+        self.radius = float(d["radius"]) if "radius" in d else 3396190.0
+        self.body = str(d["body"]) if "body" in d else "mars"
+        self.crs = str(d["crs"])
+        se = d["slope_err"] if "slope_err" in d else None
+        self.slope_err = se if se is not None and np.isfinite(se).any() else None
+        self.set_projection(self.crs, self.radius)
         kx = float(d["kx"]) if "kx" in d else 1.0
         self.ground = d["ground"] if "ground" in d else None
         self.dx, self.dy = self.a * kx, abs(self.e)  # real ground size of a cell, meters
         self.rules = rules or load_rules()
-        self.radius = 3396190.0
         self.set_limit(None)
+
+    def set_projection(self, crs, radius):
+        """Map coordinates <-> lon/lat for this body (works for any projection pyproj knows)."""
+        from pyproj import Transformer
+        self.crs, self.radius = crs, radius
+        geo = f"+proj=longlat +R={radius} +no_defs"
+        self._to_xy = Transformer.from_crs(geo, crs, always_xy=True)
+        self._to_ll = Transformer.from_crs(crs, geo, always_xy=True)
 
     def set_limit(self, limit_deg):
         """What-if: force one slope limit everywhere (the slider). None = rules file."""
@@ -32,13 +46,14 @@ class Site:
 
     # map position <-> grid cell
     def lonlat_to_cell(self, lon, lat):
-        x, y = self.radius * math.radians(lon), self.radius * math.radians(lat)
+        x, y = self._to_xy.transform(lon, lat)
         return int((y - self.y0) // self.e), int((x - self.x0) // self.a)
 
     def cell_to_lonlat(self, r, c):
         x = self.x0 + (c + 0.5) * self.a
         y = self.y0 + (r + 0.5) * self.e
-        return math.degrees(x / self.radius), math.degrees(y / self.radius)
+        lon, lat = self._to_ll.transform(x, y)
+        return float(lon), float(lat)
 
     def _check(self, cell, label):
         r, c = cell
@@ -184,7 +199,7 @@ class Site:
                     "elapsed_h": round(float(elapsed[i]), 2),
                     "note": "turn back before this point or you can't reach base on usable oxygen"}
         light = (self.light_check(full, elapsed, ls_deg, start_ltst_h)
-                 if ls_deg is not None and start_ltst_h is not None else None)
+                 if ls_deg is not None and start_ltst_h is not None and self.body == "mars" else None)
         from planner.scout import flight_plan, pick_targets, uncertainty
         path_ll = [self.cell_to_lonlat(r, c) for r, c in full]
         score, why = uncertainty(self, full, light)

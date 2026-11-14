@@ -1,0 +1,9 @@
+{
+  "name": "Lunar south pole, connecting ridge (LOLA Site01)",
+  "body": "moon",
+  "radius_m": 1737400,
+  "dtm_path": "data/moon/Site01_final_adj_5mpp_surf.tif",
+  "slope_err_path": "data/moon/Site01_final_adj_5mpp_slperr.tif",
+  "grid_m": 10,
+  "source": "LOLA 5 m/pixel south pole landing site maps, Barker et al. 2021; site names from Mazarico et al. 2011"
+}

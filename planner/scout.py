@@ -39,6 +39,12 @@ def uncertainty(site, cells, light=None):
         for i, (rr, cc) in enumerate(p):
             win = g[max(rr - k, 0): rr + k + 1, max(cc - k, 0): cc + k + 1]
             near_border[i] = (win != g[rr, cc]).any()
+    # measurement says safe, but the slope error could push it over the limit
+    could_flip = np.zeros(len(p), bool)
+    se = getattr(site, "slope_err", None)
+    if se is not None:
+        sl, lim, err = site.slope[r, c], site.limit[r, c], np.nan_to_num(se[r, c])
+        could_flip = (sl < lim) & (sl + 2 * err >= lim)
     # near a hazard that is in shadow when you get there
     hidden = np.zeros(len(p), bool)
     for w in (light or {}).get("hidden_hazards", []):
@@ -47,7 +53,8 @@ def uncertainty(site, cells, light=None):
     for mask, why, weight in ((edge, "slope at the edge of its limit", 1.0),
                               (rough, "rough ground, possible boulders or a step", 1.0),
                               (near_border, "near a ground-type border (map may be off here)", 0.5),
-                              (hidden, "hazard nearby in shadow", 1.5)):
+                              (hidden, "hazard nearby in shadow", 1.5),
+                              (could_flip, "measured slope could be over the limit (2x slope error)", 1.0)):
         score[mask] += weight
         for i in np.nonzero(mask)[0]:
             reasons[i].append(why)

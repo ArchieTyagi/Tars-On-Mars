@@ -13,7 +13,8 @@ def flat_site(n=60, slope=2.0, wall_col=None):
     s.a, s.b, s.x0, s.d, s.e, s.y0 = 4.0, 0, 0.0, 0, -4.0, 0.0
     s.dx = s.dy = 4.0
     s.ground = None
-    s.radius = 3396190.0
+    s.set_projection("+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +R=3396190 +units=m +no_defs", 3396190.0)
+    s.body, s.slope_err = "mars", None
     s.rules = {"slope_limit_deg": {"default": 20}, "caution_from": 0.75, "caution_cost": 8,
                "walk_speed_kmh": 2.0, "slope_slowdown_per_deg": 0.03, "o2_hours": 8, "o2_reserve": 0.25}
     s.set_limit(None)
