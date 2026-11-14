@@ -37,6 +37,16 @@ def png(rgba: np.ndarray) -> Response:
                     headers={"Cache-Control": "public, max-age=3600"})
 
 
+# what the scout helicopter reported (kept in memory while the server runs)
+OBSERVATIONS: List[dict] = []
+
+
+class ObservationIn(BaseModel):
+    lonlat: List[float] = Field(..., min_length=2, max_length=2)
+    finding: str = Field(..., pattern="^(safe|blocked)$")
+    radius_m: float = Field(20, gt=0, le=200)
+
+
 class PlanIn(BaseModel):
     base: List[float] = Field(..., min_length=2, max_length=2, description="[lon, lat]")
     stops: List[List[float]] = Field(..., min_length=1, max_length=6)
@@ -67,14 +77,32 @@ def site_info():
 
 @app.post("/api/plan")
 def plan(req: PlanIn):
-    s = site(round(req.slope_limit, 1) if req.slope_limit else None).with_settings(
+    s = site(round(req.slope_limit, 1) if req.slope_limit else None)
+    if OBSERVATIONS:
+        from planner.scout import apply_observations
+        s = apply_observations(s, OBSERVATIONS)
+    s = s.with_settings(
         o2_hours=req.o2_hours, o2_reserve=req.o2_reserve, walk_speed_kmh=req.walk_speed_kmh)
     try:
         r = s.plan(tuple(req.base), [tuple(p) for p in req.stops], ls_deg=req.ls, start_ltst_h=req.start_ltst_h)
     except ValueError as e:
         raise HTTPException(422, str(e))
     r["path"] = [[round(lon, 6), round(lat, 6)] for lon, lat in r["path"]]
+    r["observations"] = OBSERVATIONS
     return r
+
+
+@app.post("/api/observe")
+def observe(o: ObservationIn):
+    """Helicopter report: this spot is safe / blocked. The next plan uses it."""
+    OBSERVATIONS.append(o.model_dump())
+    return {"observations": OBSERVATIONS}
+
+
+@app.delete("/api/observe")
+def clear_observations():
+    OBSERVATIONS.clear()
+    return {"observations": []}
 
 
 @app.get("/api/point")

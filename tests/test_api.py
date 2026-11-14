@@ -70,3 +70,16 @@ def test_sun_check_in_plan():
     assert not noon["sunset_before_home"] and not noon["low_sun"]
     s = c.get("/api/sun?ls=0&ltst_h=12").json()
     assert s["up"] and abs(s["elevation_deg"] - (90 - 18.455)) < 0.1
+
+
+def test_observe_changes_the_next_plan():
+    c.delete("/api/observe")
+    body = {"base": BASE, "stops": [[77.46, 18.47]]}
+    a = c.post("/api/plan", json=body).json()
+    mid = a["path"][len(a["path"]) // 4]
+    assert c.post("/api/observe", json={"lonlat": mid, "finding": "blocked", "radius_m": 30}).status_code == 200
+    b = c.post("/api/plan", json=body).json()
+    assert b["path"] != a["path"] and len(b["observations"]) == 1
+    assert c.post("/api/observe", json={"lonlat": mid, "finding": "maybe"}).status_code == 422
+    c.delete("/api/observe")
+    assert c.post("/api/plan", json=body).json()["path"] == a["path"]
