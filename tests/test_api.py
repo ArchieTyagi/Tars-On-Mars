@@ -83,3 +83,13 @@ def test_observe_changes_the_next_plan():
     assert c.post("/api/observe", json={"lonlat": mid, "finding": "maybe"}).status_code == 422
     c.delete("/api/observe")
     assert c.post("/api/plan", json=body).json()["path"] == a["path"]
+
+
+def test_radio_in_plan_and_layer():
+    r = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47]]}).json()["radio"]
+    assert r["base_antenna_m"] == 3.0 and len(r["in_contact"]) > 0 and 0 <= r["share_in_contact"] <= 1
+    tall = c.post("/api/plan", json={"base": BASE, "stops": [[77.405, 18.47]], "base_antenna_m": 60}).json()["radio"]
+    short = c.post("/api/plan", json={"base": BASE, "stops": [[77.405, 18.47]], "base_antenna_m": 1}).json()["radio"]
+    assert tall["share_in_contact"] >= short["share_in_contact"]
+    img = c.get(f"/api/layers/radio.png?lon={BASE[0]}&lat={BASE[1]}")
+    assert img.status_code == 200 and img.content[:4] == b"\x89PNG"

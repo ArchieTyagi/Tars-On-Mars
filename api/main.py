@@ -55,6 +55,9 @@ class PlanIn(BaseModel):
     o2_hours: Optional[float] = Field(None, gt=0, le=24, description="suit oxygen supply, hours")
     o2_reserve: Optional[float] = Field(None, ge=0, lt=1, description="share kept untouched, 0.25 = 25%")
     walk_speed_kmh: Optional[float] = Field(None, gt=0, le=10)
+    # radio line-of-sight: antenna heights above ground
+    base_antenna_m: Optional[float] = Field(None, ge=0, le=100)
+    suit_antenna_m: Optional[float] = Field(None, ge=0, le=10)
     # sun check (optional): season and the Mars local time you set off
     ls: Optional[float] = Field(None, ge=0, lt=360, description="season, Ls degrees (0 = northern spring)")
     start_ltst_h: Optional[float] = Field(None, ge=0, lt=24, description="Mars local solar time at start, hours")
@@ -82,7 +85,8 @@ def plan(req: PlanIn):
         from planner.scout import apply_observations
         s = apply_observations(s, OBSERVATIONS)
     s = s.with_settings(
-        o2_hours=req.o2_hours, o2_reserve=req.o2_reserve, walk_speed_kmh=req.walk_speed_kmh)
+        o2_hours=req.o2_hours, o2_reserve=req.o2_reserve, walk_speed_kmh=req.walk_speed_kmh,
+        base_antenna_m=req.base_antenna_m, suit_antenna_m=req.suit_antenna_m)
     try:
         r = s.plan(tuple(req.base), [tuple(p) for p in req.stops], ls_deg=req.ls, start_ltst_h=req.start_ltst_h)
     except ValueError as e:
@@ -117,6 +121,20 @@ def point(lon: float, lat: float):
     sl = float(s.slope[r, c])
     return {"inside": True, "height_m": None if np.isnan(h) else round(h, 1),
             "slope_deg": None if np.isnan(sl) else round(sl, 1), "zone": names[int(s.zone[r, c])]}
+
+
+@app.get("/api/layers/radio.png")
+def radio_layer(lon: float, lat: float, base_antenna_m: float = 3.0, suit_antenna_m: float = 2.0):
+    """Where a suit can talk to base directly. Darkened = no line of sight."""
+    from planner.radio import viewshed
+    s = site()
+    cell = s.lonlat_to_cell(lon, lat)
+    if not (0 <= cell[0] < s.zone.shape[0] and 0 <= cell[1] < s.zone.shape[1]):
+        raise HTTPException(422, "base is outside the map")
+    v = viewshed(s, cell, base_antenna_m, suit_antenna_m, step=4)
+    rgba = np.zeros(v.shape + (4,), "uint8")
+    rgba[~v] = (40, 0, 60, 150)  # purple tint = no radio
+    return png(rgba)
 
 
 @app.get("/api/sun")
