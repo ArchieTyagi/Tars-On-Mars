@@ -1,0 +1,15 @@
+{
+  "grid_m": 4,
+  "slope_limit_deg": {
+    "default": 20,
+    "bedrock": 20,
+    "regolith": 15,
+    "sand": 10
+  },
+  "caution_from": 0.75,
+  "caution_cost": 8,
+  "walk_speed_kmh": 2.0,
+  "slope_slowdown_per_deg": 0.03,
+  "o2_hours": 8,
+  "o2_reserve": 0.25
+}
