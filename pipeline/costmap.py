@@ -18,12 +18,17 @@ def load_rules():
     return json.loads((ROOT / "config" / "rules.json").read_text())
 
 
+GROUND = ["default", "bedrock", "regolith", "sand"]  # same order as pipeline/geology.py
+
+
 def classify(slope, rules, ground=None, limit_override=None):
-    """GO / CAUTION / NO-GO for every cell. ground = optional grid of type names."""
+    """GO / CAUTION / NO-GO for every cell.
+    ground = optional grid of ground-type codes (index into GROUND).
+    limit_override = the what-if slider: one limit everywhere, ground types ignored."""
     lim = np.full(slope.shape, float(limit_override or rules["slope_limit_deg"]["default"]), "float32")
     if ground is not None and limit_override is None:
-        for name, deg in rules["slope_limit_deg"].items():
-            lim[ground == name] = deg
+        for i, name in enumerate(GROUND):
+            lim[ground == i] = rules["slope_limit_deg"].get(name, rules["slope_limit_deg"]["default"])
     zone = np.full(slope.shape, GO, "uint8")
     zone[slope >= lim * rules["caution_from"]] = CAUTION
     zone[(slope >= lim) | np.isnan(slope)] = NOGO
@@ -54,9 +59,14 @@ def build(name="jezero"):
     rough = roughness(dem, step)
     height = dem[: slope.shape[0] * step, : slope.shape[1] * step].reshape(
         slope.shape[0], step, slope.shape[1], step).mean(axis=(1, 3)).astype("float32")
-    zone, _ = classify(slope, rules)
+    gfile = ROOT / "data" / name / "ground.npz"
+    ground = np.load(gfile)["ground"][: slope.shape[0], : slope.shape[1]] if gfile.exists() else None
+    if ground is None:
+        print("no ground.npz yet, using the default limit everywhere (run python -m pipeline.geology)")
+    zone, _ = classify(slope, rules, ground)
     out = ROOT / "data" / name / "layers.npz"
     np.savez_compressed(out, slope=slope, rough=rough, height=height, zone=zone, kx=kx,
+                        ground=ground if ground is not None else np.zeros_like(zone),
                         transform=np.array(transform)[:6], crs=str(crs))
     print(f"east-west cell size = {kx:.4f} x north-south (latitude {mid_lat:.2f} deg)")
     print(f"grid {zone.shape} at {k} m | GO {np.mean(zone==GO):.1%}  CAUTION {np.mean(zone==CAUTION):.1%}  NO-GO {np.mean(zone==NOGO):.1%}")
