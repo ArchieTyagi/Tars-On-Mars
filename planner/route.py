@@ -13,6 +13,30 @@ from pipeline.sun import MARS_HOUR_IN_EARTH_HOURS, dark_at, sun_positions
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def turning_points(h, ignore_below_m):
+    """Indexes of the real tops and bottoms along a height profile, plus the first and last point.
+    A change of direction only counts once the ground has moved ignore_below_m the other way,
+    so ripples smaller than that (which a height map cannot tell from noise) are skipped."""
+    n = len(h)
+    if n < 2:
+        return list(range(n))
+    keep, ext, going = [0], 0, 0
+    for i in range(1, n):
+        if going == 0:
+            if abs(h[i] - h[0]) >= ignore_below_m:
+                going, ext = (1 if h[i] > h[0] else -1), i
+        elif (h[i] - h[ext]) * going > 0:
+            ext = i                                   # still heading the same way: new top (or bottom)
+        elif (h[ext] - h[i]) * going >= ignore_below_m:
+            keep.append(ext)                          # turned around for real
+            going, ext = -going, i
+    if going != 0 and ext != keep[-1]:
+        keep.append(ext)
+    if keep[-1] != n - 1:
+        keep.append(n - 1)
+    return keep
+
+
 class Site:
     def __init__(self, name="jezero", rules=None):
         d = np.load(ROOT / "data" / name / "layers.npz")
@@ -98,6 +122,16 @@ class Site:
         hours = float(np.sum(step / speed * (1 + self.rules["slope_slowdown_per_deg"] * mid)))
         z = self.zone[p[:, 0], p[:, 1]]
         return float(step.sum()), hours, float(s.max()), int((z == CAUTION).sum())
+
+    def climb_descent(self, path):
+        """Meters gained and lost along a path, from one real top or bottom to the next.
+        Ripples smaller than rules["climb_ignore_below_m"] (0.5 m) are not counted: adding up every
+        tiny rise in a height map counts its noise as climbing."""
+        p = np.array(path)
+        h = self.height[p[:, 0], p[:, 1]].astype("float64")
+        h = h[np.isfinite(h)]
+        d = np.diff(h[turning_points(h, float(self.rules.get("climb_ignore_below_m", 0.5)))])
+        return float(d[d > 0].sum()), float(-d[d < 0].sum())
 
     def with_settings(self, **settings):
         """Same map, different mission settings (oxygen, reserve, speed). Nothing is copied but the rules."""
@@ -198,8 +232,10 @@ class Site:
             dist, hrs, smax, caut = self.leg_stats(path)
             raw_km += dist / 1000
             raw_h += hrs
+            up, down = self.climb_descent(path)
             legs.append({"from": a, "to": b, "km": round(dist / 1000, 2), "hours": round(hrs, 2),
-                         "max_slope": round(smax, 1), "caution_cells": caut})
+                         "max_slope": round(smax, 1), "caution_cells": caut,
+                         "climb_m": round(up, 1), "descent_m": round(down, 1)})
             full += path if not full else path[1:]
             arrive.append(len(full) - 1)  # index where this leg ends (a stop, or base at the very end)
 
@@ -214,6 +250,18 @@ class Site:
         s = self.slope[p[:, 0], p[:, 1]]
         dt = step / (self.rules["walk_speed_kmh"] * 1000) * (1 + self.rules["slope_slowdown_per_deg"] * (s[1:] + s[:-1]) / 2)
         elapsed = np.concatenate([[0.0], np.cumsum(dt)])
+        dist_m = np.concatenate([[0.0], np.cumsum(step)])
+        hgt = self.height[p[:, 0], p[:, 1]].astype("float64")
+        up, down = self.climb_descent(full)
+        elevation = {"start_m": round(float(hgt[0]), 1), "highest_m": round(float(np.nanmax(hgt)), 1),
+                     "lowest_m": round(float(np.nanmin(hgt)), 1),
+                     "highest_above_start_m": round(float(np.nanmax(hgt) - hgt[0]), 1),
+                     "lowest_below_start_m": round(float(hgt[0] - np.nanmin(hgt)), 1),
+                     "climb_m": round(up, 1), "descent_m": round(down, 1),
+                     "ignores_ripples_below_m": float(self.rules.get("climb_ignore_below_m", 0.5)),
+                     "note": "heights are above the Mars/Moon reference surface of the source map; climb is "
+                             "added up from each real bottom to the next real top, skipping ripples under half "
+                             "a meter that the height map cannot tell from noise"}
         for i in arrive[:-1]:          # time at each stop is spent before walking on
             elapsed[i + 1:] += stop_h
         back = home[p[:, 0], p[:, 1]]
@@ -238,6 +286,8 @@ class Site:
             from pipeline.mars_time import MARS_HOUR_IN_EARTH_HOURS as _mh
             from pipeline.weather import summary
             weather = summary(ls_deg, start_ltst_h + np.asarray(elapsed) / _mh)
+        from planner.radiation import outing
+        radiation = outing(self.body, hours)
         from planner.radio import route_contact
         radio = route_contact(self, pts[0], full, elapsed,
                               float(self.rules.get("base_antenna_m", 3.0)), float(self.rules.get("suit_antenna_m", 2.0)))
@@ -267,7 +317,11 @@ class Site:
             "elapsed_h": [round(float(x), 3) for x in elapsed],
             "home_h": [round(float(x), 3) if np.isfinite(x) else None for x in back],
             "slope_deg": [round(float(x), 1) if np.isfinite(x) else None for x in s],
+            "height_m": [round(float(x), 1) if np.isfinite(x) else None for x in hgt],
+            "dist_m": [round(float(x), 1) for x in dist_m],
+            "elevation": elevation,
             "light": light,
+            "radiation": radiation,
             "scout": scout,
             "radio": radio,
             "weather": weather,
