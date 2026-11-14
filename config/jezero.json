@@ -6,5 +6,10 @@
   "center_lon": 77.43,
   "center_lat": 18.455,
   "half_size_m": 2500,
-  "chunk_rows": 500
+  "chunk_rows": 500,
+  "grid_m": 4,
+  "default_base": [
+    77.4508,
+    18.4447
+  ]
 }
