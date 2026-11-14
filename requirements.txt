@@ -9,3 +9,4 @@ httpx
 pillow
 geopandas
 pyogrio
+pyproj
