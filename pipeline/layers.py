@@ -1,10 +1,19 @@
 """Turn a height map into the layers the planner needs."""
+import math
+
 import numpy as np
 
 
-def slope_deg(dem, cell_m):
-    """Steepness in degrees at each point. Gaps (NaN) stay NaN."""
-    gy, gx = np.gradient(dem.astype("float64"), cell_m)
+def ground_scale_x(lat_deg):
+    """Our maps use a grid that's true to size only at the equator.
+    East-west, one cell is really cos(latitude) times smaller on the ground."""
+    return math.cos(math.radians(lat_deg))
+
+
+def slope_deg(dem, cell_m, cell_x_m=None):
+    """Steepness in degrees at each point. Gaps (NaN) stay NaN.
+    cell_x_m = real east-west size of a cell, if different from north-south."""
+    gy, gx = np.gradient(dem.astype("float64"), cell_m, cell_x_m or cell_m)
     return np.degrees(np.arctan(np.hypot(gx, gy))).astype("float32")
 
 

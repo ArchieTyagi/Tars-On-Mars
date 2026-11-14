@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 import rasterio
 
-from pipeline.layers import block_max, roughness, slope_deg
+import math
+
+from pipeline.layers import block_max, ground_scale_x, roughness, slope_deg
 
 ROOT = Path(__file__).resolve().parents[1]
 GO, CAUTION, NOGO = 0, 1, 2
@@ -46,15 +48,17 @@ def build(name="jezero"):
         transform = src.transform * src.transform.scale(k, k)
         crs = src.crs
     step = int(round(k / cell))
-    slope = block_max(slope_deg(dem, cell), step)
+    mid_lat = math.degrees((transform.f + transform.e * dem.shape[0] / step / 2) / 3396190.0)
+    kx = ground_scale_x(mid_lat)
+    slope = block_max(slope_deg(dem, cell, cell * kx), step)
     rough = roughness(dem, step)
     height = dem[: slope.shape[0] * step, : slope.shape[1] * step].reshape(
         slope.shape[0], step, slope.shape[1], step).mean(axis=(1, 3)).astype("float32")
     zone, _ = classify(slope, rules)
     out = ROOT / "data" / name / "layers.npz"
-    np.savez_compressed(out, slope=slope, rough=rough, height=height, zone=zone,
+    np.savez_compressed(out, slope=slope, rough=rough, height=height, zone=zone, kx=kx,
                         transform=np.array(transform)[:6], crs=str(crs))
-    n = zone.size
+    print(f"east-west cell size = {kx:.4f} x north-south (latitude {mid_lat:.2f} deg)")
     print(f"grid {zone.shape} at {k} m | GO {np.mean(zone==GO):.1%}  CAUTION {np.mean(zone==CAUTION):.1%}  NO-GO {np.mean(zone==NOGO):.1%}")
     print(f"slope p50 {np.nanpercentile(slope,50):.1f}  p95 {np.nanpercentile(slope,95):.1f}  max {np.nanmax(slope):.1f} deg | height {np.nanmin(height):.0f}..{np.nanmax(height):.0f} m")
     return out
