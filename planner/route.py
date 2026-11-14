@@ -16,6 +16,8 @@ class Site:
         d = np.load(ROOT / "data" / name / "layers.npz")
         self.slope, self.rough, self.height = d["slope"], d["rough"], d["height"]
         self.a, self.b, self.x0, self.d, self.e, self.y0 = d["transform"]
+        kx = float(d["kx"]) if "kx" in d else 1.0
+        self.dx, self.dy = self.a * kx, abs(self.e)  # real ground size of a cell, meters
         self.rules = rules or load_rules()
         self.radius = 3396190.0
         self.set_limit(None)
@@ -42,9 +44,33 @@ class Site:
         if self.zone[r, c] == NOGO:
             raise ValueError(f"{label} is on NO-GO ground ({self.slope[r, c]:.0f} deg)")
 
+    def time_cost(self):
+        """Hours per meter walked on each cell, inf on NO-GO."""
+        speed = self.rules["walk_speed_kmh"] * 1000
+        t = 1.0 / speed * (1 + self.rules["slope_slowdown_per_deg"] * np.nan_to_num(self.slope, nan=90.0))
+        return np.where(self.zone == NOGO, np.inf, t)
+
+    def _mcp(self, costs):
+        return MCP_Geometric(costs, fully_connected=True, sampling=(self.dy, self.dx))
+
+    def _steps_m(self, p):
+        d = np.diff(p, axis=0)
+        return np.hypot(d[:, 0] * self.dy, d[:, 1] * self.dx)
+
+    def home_field(self, base):
+        """Hours to walk straight back to base from every cell (safest way, inf = can't)."""
+        m = self._mcp(self.time_cost())
+        hours, _ = m.find_costs([self.lonlat_to_cell(*base)])
+        return hours
+
+    def safe_range(self, base):
+        """Cells you can walk to AND get back from on usable oxygen."""
+        usable = self.rules["o2_hours"] * (1 - self.rules["o2_reserve"])
+        return self.home_field(base) * 2 <= usable
+
     def leg_stats(self, path):
         p = np.array(path)
-        step = np.hypot(*np.diff(p, axis=0).T) * self.a
+        step = self._steps_m(p)
         s = self.slope[p[:, 0], p[:, 1]]
         mid = (s[1:] + s[:-1]) / 2
         speed = self.rules["walk_speed_kmh"] * 1000
@@ -61,7 +87,7 @@ class Site:
         costs = np.where(self.cost < 0, np.inf, self.cost)
         mcps, table = [], np.full((len(pts), len(pts)), np.inf)
         for i, p in enumerate(pts):
-            m = MCP_Geometric(costs, fully_connected=True)
+            m = self._mcp(costs)
             cum, _ = m.find_costs([p])
             mcps.append(m)
             for j, q in enumerate(pts):
@@ -84,6 +110,21 @@ class Site:
 
         hours = sum(l["hours"] for l in legs)
         usable = self.rules["o2_hours"] * (1 - self.rules["o2_reserve"])
+        home = self.home_field(base)
+        p = np.array(full)
+        step = self._steps_m(p)
+        s = self.slope[p[:, 0], p[:, 1]]
+        dt = step / (self.rules["walk_speed_kmh"] * 1000) * (1 + self.rules["slope_slowdown_per_deg"] * (s[1:] + s[:-1]) / 2)
+        elapsed = np.concatenate([[0.0], np.cumsum(dt)])
+        back = home[p[:, 0], p[:, 1]]
+        margin = usable - elapsed - back
+        ponr = None
+        bad = np.where(margin < 0)[0]
+        if len(bad):
+            i = int(bad[0])
+            ponr = {"index": i, "lonlat": self.cell_to_lonlat(*full[i]),
+                    "elapsed_h": round(float(elapsed[i]), 2),
+                    "note": "turn back before this point or you can't reach base on usable oxygen"}
         return {
             "order": list(best),
             "km": round(sum(l["km"] for l in legs), 2),
@@ -91,6 +132,8 @@ class Site:
             "max_slope": max(l["max_slope"] for l in legs),
             "o2_ok": hours <= usable,
             "o2_margin_h": round(usable - hours, 2),
+            "point_of_no_return": ponr,
+            "margin_h": [round(float(x), 2) for x in margin],
             "legs": legs,
             "path": [self.cell_to_lonlat(r, c) for r, c in full],
         }
