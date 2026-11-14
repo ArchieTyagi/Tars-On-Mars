@@ -12,5 +12,6 @@
   "default_base": [
     77.4508,
     18.4447
-  ]
+  ],
+  "source": "USGS HiRISE 1 m height map of Jezero (Mars 2020 Terrain Relative Navigation HiRISE DTM Mosaic, Fergason et al. 2020, doi:10.5066/P9REJ9JN)"
 }

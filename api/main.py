@@ -62,6 +62,23 @@ async def readable_errors(request, exc):
             msg = f"Check the {field}: {e.get('msg')}."
         msgs.append(msg)
     return JSONResponse(status_code=422, content={"detail": " ".join(dict.fromkeys(msgs))})
+
+
+class CompressTextOnly:
+    """gzip for JSON and other data answers (a plan shrinks about 5x). Pictures are skipped:
+    PNG and JPEG are already compressed, squeezing them again only burns CPU."""
+    SKIP = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".woff", ".woff2", ".ico")
+
+    def __init__(self, app):
+        from starlette.middleware.gzip import GZipMiddleware
+        self.app, self.gz = app, GZipMiddleware(app, minimum_size=2000, compresslevel=6)
+
+    async def __call__(self, scope, receive, send):
+        plain = scope["type"] != "http" or scope.get("path", "").lower().endswith(self.SKIP)
+        await (self.app if plain else self.gz)(scope, receive, send)
+
+
+app.add_middleware(CompressTextOnly)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -209,11 +226,12 @@ def site_info(site_id: str = Query("jezero", alias="site")):
             "center": list(s.cell_to_lonlat(r0, c0)),
             "grid_m": round(s.dy, 2), "shape": list(s.zone.shape), "rules": s.rules,
             "default_base": cfg.get("default_base") or list(s.cell_to_lonlat(*mid)),
-            "has_ground_types": s.ground is not None and bool(s.ground.any()),
+            "has_ground_types": _has_ground(s),
             "has_slope_error": s.slope_err is not None,
             "has_minerals": getattr(s, "minerals", None) is not None,
             "has_photo": _photo(site_id) is not None,
             "has_rover_track": _rover(site_id) is not None,
+            "layers": layer_list(site_id, s),
             "sun_check": s.body == "mars",
             "crs": s.crs,
             "extent_xy": {"left": s.x0, "top": s.y0, "right": s.x0 + s.a * s.zone.shape[1],
@@ -473,6 +491,124 @@ def photo_layer(m_per_px: int = Query(2, description="meters per pixel: 1, 2 or 
                              "Access-Control-Expose-Headers": "X-Source"})
 
 
+SLOPE_CLASSES = [(0, 5, "#1a9850"), (5, 10, "#91cf60"), (10, 15, "#fee08b"),
+                 (15, 20, "#fc8d59"), (20, 25, "#d73027"), (25, None, "#7f0000")]
+GROUND_COLORS = {"bedrock": ("#7d8a99", "Bedrock"), "regolith": ("#b5651d", "Delta fan (loose ground)"),
+                 "sand": ("#f2d16b", "Sand")}
+RISK_COLOR = "#ff00ff"
+
+
+def _rgb(h):
+    return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+
+@lru_cache(maxsize=len(SITES))
+def _slope_png(name) -> bytes:
+    sl = site(None, name).slope
+    rgba = np.zeros(sl.shape + (4,), "uint8")
+    for lo, hi, color in SLOPE_CLASSES:
+        rgba[(sl >= lo) & (sl < (hi if hi is not None else 91))] = (*_rgb(color), 170)
+    return png_bytes(rgba)   # no data stays see-through
+
+
+@app.get("/api/layers/slope.png")
+def slope_layer(site_id: str = Query("jezero", alias="site")):
+    """How steep the ground is, in six steps of 5 degrees."""
+    site(None, site_id)  # 404 if unknown
+    return png(_slope_png(site_id))
+
+
+@lru_cache(maxsize=len(SITES))
+def _ground_png(name) -> bytes:
+    from pipeline.costmap import GROUND
+    g = site(None, name).ground
+    rgba = np.zeros(g.shape + (4,), "uint8")
+    for i, kind in enumerate(GROUND):
+        if kind in GROUND_COLORS:
+            rgba[g == i] = (*_rgb(GROUND_COLORS[kind][0]), 150)
+    return png_bytes(rgba)
+
+
+def _has_ground(s):
+    return s.ground is not None and bool(s.ground.any())
+
+
+@app.get("/api/layers/ground.png")
+def ground_layer(site_id: str = Query("jezero", alias="site")):
+    """What the ground is made of (from the geologic map). Looser ground gets a stricter slope limit."""
+    if not _has_ground(site(None, site_id)):
+        raise HTTPException(404, "No ground-type map for this site.")
+    return png(_ground_png(site_id))
+
+
+@lru_cache(maxsize=8)
+def _risk_png(limit, name) -> bytes:
+    s = site(limit, name)
+    err = np.nan_to_num(s.slope_err, nan=0.0)
+    risky = (s.slope < s.limit) & (s.slope + 2 * err >= s.limit)   # looks walkable, may not be
+    rgba = np.zeros(risky.shape + (4,), "uint8")
+    rgba[risky] = (*_rgb(RISK_COLOR), 170)
+    return png_bytes(rgba)
+
+
+@app.get("/api/layers/slope_risk.png")
+def slope_risk_layer(slope_limit: Optional[float] = num_q(None, ge=5, le=35), site_id: str = Query("jezero", alias="site")):
+    """Ground that looks walkable but could be over the limit once the map's own slope error
+    is counted (slope + 2 x error >= limit). Only for sites whose map comes with a slope error."""
+    if site(None, site_id).slope_err is None:
+        raise HTTPException(404, "No slope error map for this site.")
+    return png(_risk_png(None if slope_limit is None else round(float(slope_limit), 1), site_id))
+
+
+def layer_list(site_id, s):
+    """Every map layer this site can draw, with its address and legend, so the web app does not hardcode them."""
+    q = f"?site={site_id}"
+    lim = s.rules["slope_limit_deg"]
+    out = []
+    if _photo(site_id) is not None:
+        out.append({"id": "photo", "name": "Real photo", "kind": "base", "url": f"/api/layers/photo.jpg{q}&m_per_px=2",
+                    "about": "Orbital photo of the ground (HiRISE). Also at m_per_px=1 (sharper) and 4 (lighter)."})
+    out.append({"id": "hillshade", "name": "Shaded relief", "kind": "base", "url": f"/api/layers/hillshade.png{q}",
+                "about": "The height map lit from the north-west, so hills and dips stand out."})
+    out.append({"id": "zones", "name": "Walk zones", "kind": "overlay", "url": f"/api/layers/zones.png{q}",
+                "options": ["slope_limit"],
+                "about": "Where you can walk. Clear = GO.",
+                "legend": [{"color": "#f5a623", "label": "CAUTION: within a quarter of the slope limit"},
+                           {"color": "#d0021b", "label": "NO-GO: at or over the slope limit, or no data"}]})
+    out.append({"id": "slope", "name": "Slope", "kind": "overlay", "url": f"/api/layers/slope.png{q}",
+                "about": "How steep the ground is (steepest spot in each grid square).",
+                "legend": [{"color": c_, "from_deg": lo, **({"to_deg": hi} if hi is not None else {}),
+                            "label": f"{lo} to {hi} deg" if hi is not None else f"{lo} deg and steeper"}
+                           for lo, hi, c_ in SLOPE_CLASSES]})
+    if _has_ground(s):
+        out.append({"id": "ground", "name": "Ground type", "kind": "overlay", "url": f"/api/layers/ground.png{q}",
+                    "about": "What the ground is made of, from the geologic map. Looser ground has a stricter slope limit.",
+                    "legend": [{"color": c_, "label": f"{label} (slope limit {lim.get(kind, lim['default'])} deg)"}
+                               for kind, (c_, label) in GROUND_COLORS.items()]})
+    if getattr(s, "minerals", None) is not None:
+        from pipeline.minerals import KEY
+        out.append({"id": "minerals", "name": "Minerals", "kind": "overlay", "url": f"/api/layers/minerals.png{q}",
+                    "about": "Minerals seen from orbit (CRISM, 36 m pixels). Strong color = high confidence, dark = medium. "
+                             "Names are closest matches.",
+                    "legend": [{"color": "#%02x%02x%02x" % tuple(hi), "label": n} for n, hi, _ in KEY]})
+    if s.slope_err is not None:
+        out.append({"id": "slope_risk", "name": "Could be too steep", "kind": "overlay",
+                    "url": f"/api/layers/slope_risk.png{q}", "options": ["slope_limit"],
+                    "about": "Ground that looks walkable but could be over the limit once the map's own slope error is counted.",
+                    "legend": [{"color": RISK_COLOR, "label": "slope + 2 x slope error reaches the limit"}]})
+    out.append({"id": "safe_range", "name": "Reach on your oxygen", "kind": "overlay", "url": f"/api/layers/safe_range.png{q}",
+                "needs_base": True, "options": ["slope_limit", "o2_hours", "o2_reserve", "walk_speed_kmh", "stop_minutes"],
+                "about": "Darkened = you cannot walk there and back on usable oxygen from this base.",
+                "legend": [{"color": "#000000", "label": "out of reach"}]})
+    out.append({"id": "radio", "name": "Radio contact with base", "kind": "overlay", "url": f"/api/layers/radio.png{q}",
+                "needs_base": True, "options": ["base_antenna_m", "suit_antenna_m"],
+                "about": "Purple = no straight line to the base antenna, so no direct radio.",
+                "legend": [{"color": "#28003c", "label": "no direct radio"}]})
+    for l in out:
+        l.setdefault("needs_base", False)
+    return out
+
+
 @app.get("/api/layers/hillshade.png")
 def hillshade(site_id: str = Query("jezero", alias="site")):
     site(None, site_id)  # 404 if unknown
@@ -507,10 +643,57 @@ def safe_range(lon: float = num_q(), lat: float = num_q(), site_id: str = Query(
     return png(rgba)
 
 
-# serve the built frontend from the same server when it exists (one public link for everything)
+def warm_up():
+    """Load both maps and draw the slow pictures once, so the first visitor does not wait for them."""
+    for n in SITES:
+        base_site(n)
+        _hillshade_png(n)
+        _zones_png(None, n)
+        _slope_png(n)
+        _photo(n)
+        _rover(n)
+
+
+def _warm_in_background():
+    import os
+    import threading
+    if not os.environ.get("TARS_NO_WARMUP"):
+        threading.Thread(target=warm_up, daemon=True).start()
+
+
+app.router.on_startup.append(_warm_in_background)
+
+
+# serve the built web app from the same server when it exists (one public link for everything)
 from pathlib import Path as _P  # noqa: E402
-from fastapi.staticfiles import StaticFiles  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+
+
+def web_file(dist, path):
+    """The file inside the web folder for this address, or None. Never anything outside the folder."""
+    root = _P(dist).resolve()
+    f = (root / path).resolve()
+    return f if path and f.is_relative_to(root) and f.is_file() else None
+
+
+def attach_frontend(app_, dist):
+    """Serve the built web app. Any page address (like /planner) gets the app's home file, so a
+    refresh or a shared link works; the app then shows the right page itself."""
+    dist = _P(dist)
+
+    @app_.get("/{path:path}", include_in_schema=False)
+    def web(path: str):
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, f"No such API address: /{path}")
+        f = web_file(dist, path)
+        if f is not None:
+            keep = "public, max-age=31536000, immutable" if path.startswith("assets/") else "no-cache"
+            return FileResponse(f, headers={"Cache-Control": keep})
+        if "." in path.rsplit("/", 1)[-1]:
+            raise HTTPException(404, "File not found.")
+        return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
+
 
 _DIST = _P(__file__).resolve().parents[1] / "frontend" / "dist"
 if _DIST.exists():
-    app.mount("/", StaticFiles(directory=_DIST, html=True), name="web")
+    attach_frontend(app, _DIST)
