@@ -7,3 +7,5 @@ fastapi
 uvicorn
 httpx
 pillow
+geopandas
+pyogrio

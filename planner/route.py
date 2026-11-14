@@ -17,6 +17,7 @@ class Site:
         self.slope, self.rough, self.height = d["slope"], d["rough"], d["height"]
         self.a, self.b, self.x0, self.d, self.e, self.y0 = d["transform"]
         kx = float(d["kx"]) if "kx" in d else 1.0
+        self.ground = d["ground"] if "ground" in d else None
         self.dx, self.dy = self.a * kx, abs(self.e)  # real ground size of a cell, meters
         self.rules = rules or load_rules()
         self.radius = 3396190.0
@@ -24,7 +25,7 @@ class Site:
 
     def set_limit(self, limit_deg):
         """What-if: force one slope limit everywhere (the slider). None = rules file."""
-        self.zone, _ = classify(self.slope, self.rules, limit_override=limit_deg)
+        self.zone, self.limit = classify(self.slope, self.rules, self.ground, limit_override=limit_deg)
         self.cost = walk_cost(self.slope, self.zone, self.rules)
 
     # map position <-> grid cell
