@@ -1,7 +1,8 @@
 """Web API the frontend calls. Run: uvicorn api.main:app --reload"""
 import io
 from functools import lru_cache
-from typing import List, Optional
+import math
+from typing import Annotated, List, Optional
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
@@ -22,7 +23,8 @@ FIELD_NAMES = {"base": "base", "stops": "stops", "slope_limit": "slope limit", "
                "o2_reserve": "oxygen reserve", "walk_speed_kmh": "walking speed", "ls": "season (Ls)",
                "start_ltst_h": "start time", "base_antenna_m": "base antenna height",
                "suit_antenna_m": "suit antenna height", "lonlat": "position", "finding": "finding",
-               "radius_m": "radius", "lon": "longitude", "lat": "latitude"}
+               "radius_m": "radius", "lon": "longitude", "lat": "latitude", "observations": "helicopter reports",
+               "sol": "sol", "ltst_h": "local time", "step": "step", "x": "x", "y": "y"}
 
 
 @app.exception_handler(RequestValidationError)
@@ -30,16 +32,28 @@ async def readable_errors(request, exc):
     msgs = []
     for e in exc.errors():
         loc = [str(x) for x in e.get("loc", []) if x not in ("body", "query")]
-        field = FIELD_NAMES.get(loc[0], loc[0]) if loc else "input"
+        field = FIELD_NAMES.get(loc[0], loc[0]) if loc else "request body"
         t, ctx = e.get("type", ""), e.get("ctx", {}) or {}
-        if t == "too_long":
+        if t == "finite_number":
+            msg = f"The {field} must be a real number (not NaN or infinity)."
+        elif t == "json_invalid":
+            msg = "The request body is not valid JSON."
+        elif t in ("too_short", "too_long") and loc and loc[0] in ("base", "stops", "lonlat") and (loc[0] != "stops" or len(loc) > 1):
+            msg = f"Each point in {field} needs exactly 2 numbers: [longitude, latitude]."
+        elif t == "too_long":
             msg = f"Too many {field}: at most {ctx.get('max_length')}."
         elif t == "too_short":
             msg = f"Add at least {ctx.get('min_length')} {field[:-1] if field.endswith('s') else field}."
-        elif t in ("greater_than", "greater_than_equal"):
-            msg = f"The {field} must be at least {ctx.get('gt', ctx.get('ge'))}."
-        elif t in ("less_than", "less_than_equal"):
-            msg = f"The {field} must be below {ctx.get('lt', ctx.get('le'))}."
+        elif t == "greater_than":
+            msg = f"The {field} must be more than {ctx.get('gt')}."
+        elif t == "greater_than_equal":
+            msg = f"The {field} must be at least {ctx.get('ge')}."
+        elif t == "less_than":
+            msg = f"The {field} must be below {ctx.get('lt')}."
+        elif t == "less_than_equal":
+            msg = f"The {field} must be at most {ctx.get('le')}."
+        elif not loc and t.endswith("_type"):
+            msg = "The request body must be a JSON object."
         elif t.endswith("parsing") or t.endswith("_type"):
             msg = f"The {field} must be a number."
         elif t == "missing":
@@ -89,39 +103,69 @@ def bounds(s: Site):
             "corners": corners}
 
 
-def png(rgba: np.ndarray) -> Response:
+def png_bytes(rgba: np.ndarray) -> bytes:
     buf = io.BytesIO()
     Image.fromarray(rgba, "RGBA").save(buf, "PNG", optimize=True)
-    return Response(buf.getvalue(), media_type="image/png",
-                    headers={"Cache-Control": "public, max-age=3600"})
+    return buf.getvalue()
 
 
-# what the scout helicopter reported (kept in memory while the server runs)
-OBSERVATIONS: dict = {n: [] for n in SITES}
+def png(data) -> Response:
+    if isinstance(data, np.ndarray):
+        data = png_bytes(data)
+    return Response(data, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+
+Num = Annotated[float, Field(allow_inf_nan=False)]
+Point = Annotated[List[Num], Field(min_length=2, max_length=2)]
+
+
+def num_q(default=..., **kw):
+    """Query number that refuses NaN / infinity."""
+    return Query(default, allow_inf_nan=False, **kw)
+
+
+def _the(label: str) -> str:
+    """'base' -> 'The base', 'stop 2' -> 'Stop 2'."""
+    return label[0].upper() + label[1:] if label[-1].isdigit() else f"The {label}"
+
+
+def cell_of(s: Site, lon: float, lat: float, label: str):
+    """Grid cell for a lon/lat, or a clear 422 if it is not a real spot on this map."""
+    if not (math.isfinite(lon) and math.isfinite(lat) and -360 <= lon <= 360 and -90 <= lat <= 90):
+        raise HTTPException(422, f"{_the(label)} is not a real position (longitude -360..360, latitude -90..90).")
+    try:
+        r, c = s.lonlat_to_cell(lon, lat)
+    except (ValueError, OverflowError):
+        raise HTTPException(422, f"{_the(label)} is outside the map data.")
+    if not (0 <= r < s.zone.shape[0] and 0 <= c < s.zone.shape[1]):
+        raise HTTPException(422, f"{_the(label)} is outside the map data.")
+    return r, c
 
 
 class ObservationIn(BaseModel):
-    site: str = "jezero"
-    lonlat: List[float] = Field(..., min_length=2, max_length=2)
+    """What the scout helicopter saw at one spot. Sent along with each plan, so every
+    user only changes their own plan (the server keeps no shared state)."""
+    lonlat: Point
     finding: str = Field(..., pattern="^(safe|blocked)$")
-    radius_m: float = Field(20, gt=0, le=200)
+    radius_m: Num = Field(20, gt=0, le=200)
 
 
 class PlanIn(BaseModel):
     site: str = "jezero"
-    base: List[float] = Field(..., min_length=2, max_length=2, description="[lon, lat]")
-    stops: List[List[float]] = Field(..., min_length=1, max_length=6)
-    slope_limit: Optional[float] = Field(None, ge=5, le=35)
+    base: Point = Field(..., description="[lon, lat]")
+    stops: List[Point] = Field(..., min_length=1, max_length=6)
+    observations: List[ObservationIn] = Field([], max_length=50)
+    slope_limit: Optional[Num] = Field(None, ge=5, le=35)
     # mission settings, chosen by the user (defaults come from config/rules.json)
-    o2_hours: Optional[float] = Field(None, gt=0, le=24, description="suit oxygen supply, hours")
-    o2_reserve: Optional[float] = Field(None, ge=0, lt=1, description="share kept untouched, 0.25 = 25%")
-    walk_speed_kmh: Optional[float] = Field(None, gt=0, le=10)
+    o2_hours: Optional[Num] = Field(None, gt=0, le=24, description="suit oxygen supply, hours")
+    o2_reserve: Optional[Num] = Field(None, ge=0, lt=1, description="share kept untouched, 0.25 = 25%")
+    walk_speed_kmh: Optional[Num] = Field(None, gt=0, le=10)
     # radio line-of-sight: antenna heights above ground
-    base_antenna_m: Optional[float] = Field(None, ge=0, le=100)
-    suit_antenna_m: Optional[float] = Field(None, ge=0, le=10)
+    base_antenna_m: Optional[Num] = Field(None, ge=0, le=100)
+    suit_antenna_m: Optional[Num] = Field(None, ge=0, le=10)
     # sun check (optional): season and the Mars local time you set off
-    ls: Optional[float] = Field(None, ge=0, lt=360, description="season, Ls degrees (0 = northern spring)")
-    start_ltst_h: Optional[float] = Field(None, ge=0, lt=24, description="Mars local solar time at start, hours")
+    ls: Optional[Num] = Field(None, ge=0, lt=360, description="season, Ls degrees (0 = northern spring)")
+    start_ltst_h: Optional[Num] = Field(None, ge=0, lt=24, description="Mars local solar time at start, hours")
 
 
 @app.get("/api/health")
@@ -130,15 +174,19 @@ def health():
 
 
 @app.get("/api/convert")
-def convert(site_id: str = Query("jezero", alias="site"), lon: Optional[float] = None, lat: Optional[float] = None,
-            x: Optional[float] = None, y: Optional[float] = None):
+def convert(site_id: str = Query("jezero", alias="site"), lon: Optional[float] = num_q(None),
+            lat: Optional[float] = num_q(None), x: Optional[float] = num_q(None), y: Optional[float] = num_q(None)):
     """lon/lat <-> map meters for a site. Needed to draw polar maps (the Moon) on a flat screen."""
     s = site(None, site_id)
     if lon is not None and lat is not None:
+        if not (-360 <= lon <= 360 and -90 <= lat <= 90):
+            raise HTTPException(422, "Longitude must be -360..360 and latitude -90..90.")
         xx, yy = s._to_xy.transform(lon, lat)
         return {"x": xx, "y": yy}
     if x is not None and y is not None:
         lo, la = s._to_ll.transform(x, y)
+        if not (math.isfinite(lo) and math.isfinite(la)):
+            raise HTTPException(422, "Those map meters are not a real position on this body.")
         return {"lon": lo, "lat": la}
     raise HTTPException(422, "Give lon and lat, or x and y.")
 
@@ -175,7 +223,12 @@ def plan(req: PlanIn):
     if (req.ls is None) != (req.start_ltst_h is None):
         raise HTTPException(422, "For the sun check give both the season (Ls) and the start time, or neither.")
     s = site(req.slope_limit, req.site)
-    obs = OBSERVATIONS.get(req.site, [])
+    cell_of(s, *req.base, "base")
+    for i, st in enumerate(req.stops, 1):
+        cell_of(s, *st, f"stop {i}")
+    for i, o in enumerate(req.observations, 1):
+        cell_of(s, *o.lonlat, f"helicopter report {i}")
+    obs = [o.model_dump() for o in req.observations]
     if obs:
         from planner.scout import apply_observations
         s = apply_observations(s, obs)
@@ -194,27 +247,13 @@ def plan(req: PlanIn):
     return r
 
 
-@app.post("/api/observe")
-def observe(o: ObservationIn):
-    """Helicopter report: this spot is safe / blocked. The next plan uses it."""
-    site(None, o.site)  # 404 if unknown
-    d = o.model_dump()
-    OBSERVATIONS[o.site].append({k: v for k, v in d.items() if k != "site"})
-    return {"observations": OBSERVATIONS[o.site]}
-
-
-@app.delete("/api/observe")
-def clear_observations(site_id: str = Query("jezero", alias="site")):
-    OBSERVATIONS.get(site_id, []).clear()
-    return {"observations": []}
-
-
 @app.get("/api/point")
-def point(lon: float, lat: float, site_id: str = Query("jezero", alias="site")):
+def point(lon: float = num_q(), lat: float = num_q(), site_id: str = Query("jezero", alias="site")):
     """What's under one spot: height, slope, zone. For the map's hover readout."""
     s = site(None, site_id)
-    r, c = s.lonlat_to_cell(lon, lat)
-    if not (0 <= r < s.zone.shape[0] and 0 <= c < s.zone.shape[1]):
+    try:
+        r, c = cell_of(s, lon, lat, "point")
+    except HTTPException:
         return {"inside": False}
     names = ["GO", "CAUTION", "NO-GO"]
     h = float(s.height[r, c])
@@ -231,14 +270,13 @@ def point(lon: float, lat: float, site_id: str = Query("jezero", alias="site")):
 
 
 @app.get("/api/layers/radio.png")
-def radio_layer(lon: float, lat: float, base_antenna_m: float = 3.0, suit_antenna_m: float = 2.0,
+def radio_layer(lon: float = num_q(), lat: float = num_q(), base_antenna_m: float = num_q(3.0, ge=0, le=100),
+                suit_antenna_m: float = num_q(2.0, ge=0, le=10),
                 site_id: str = Query("jezero", alias="site")):
     """Where a suit can talk to base directly. Darkened = no line of sight."""
     from planner.radio import viewshed
     s = site(None, site_id)
-    cell = s.lonlat_to_cell(lon, lat)
-    if not (0 <= cell[0] < s.zone.shape[0] and 0 <= cell[1] < s.zone.shape[1]):
-        raise HTTPException(422, "base is outside the map")
+    cell = cell_of(s, lon, lat, "base")
     v = viewshed(s, cell, base_antenna_m, suit_antenna_m, step=4)
     rgba = np.zeros(v.shape + (4,), "uint8")
     rgba[~v] = (40, 0, 60, 150)  # purple tint = no radio
@@ -246,7 +284,7 @@ def radio_layer(lon: float, lat: float, base_antenna_m: float = 3.0, suit_antenn
 
 
 @app.get("/api/sun")
-def sun(ls: float, ltst_h: float, site_id: str = Query("jezero", alias="site")):
+def sun(ls: float = num_q(ge=0, lt=360), ltst_h: float = num_q(ge=0, lt=24), site_id: str = Query("jezero", alias="site")):
     """Sun height and direction over the site at a given season and Mars local time."""
     from pipeline.sun import sun_position
     if site(None, site_id).body != "mars":
@@ -257,7 +295,7 @@ def sun(ls: float, ltst_h: float, site_id: str = Query("jezero", alias="site")):
 
 
 @app.get("/api/weather")
-def weather(ls: float = Query(..., ge=0, lt=360)):
+def weather(ls: float = num_q(ge=0, lt=360)):
     """Typical Jezero weather by hour for a season, from Perseverance's MEDA station."""
     from pipeline.weather import SEASONS, load, season_of
     w = load()
@@ -273,18 +311,17 @@ def weather(ls: float = Query(..., ge=0, lt=360)):
 
 
 @app.get("/api/sol_to_ls")
-def sol_to_ls(sol: float = Query(..., ge=0)):
+def sol_to_ls(sol: float = num_q(ge=0, le=100000)):
     """Season (Ls) for a Perseverance mission sol, Allison & McEwen 2000."""
     from pipeline.mars_time import ls_from_m20_sol, utc_from_m20_sol
     return {"sol": sol, "ls": round(ls_from_m20_sol(sol), 2), "utc": utc_from_m20_sol(sol).isoformat()}
 
 
 @app.get("/api/terrain")
-def terrain(step: int = 4, site_id: str = Query("jezero", alias="site")):
+def terrain(step: int = Query(4, ge=1, le=16), site_id: str = Query("jezero", alias="site")):
     """Height grid for the 3D view, every `step` cells (4 = 16 m spacing on Jezero).
     Raw little-endian float32, row by row from the top of the map. Size + spacing in the headers."""
     s = site(None, site_id)
-    step = max(1, min(step, 16))
     h = s.height[::step, ::step].astype("<f4")
     h = np.where(np.isnan(h), float(np.nanmin(h)), h)
     return Response(h.tobytes(), media_type="application/octet-stream", headers={
@@ -294,12 +331,18 @@ def terrain(step: int = 4, site_id: str = Query("jezero", alias="site")):
 
 
 @app.get("/api/layers/zones.png")
-def zones(slope_limit: Optional[float] = None, site_id: str = Query("jezero", alias="site")):
-    z = site(slope_limit, site_id).zone
+def zones(slope_limit: Optional[float] = num_q(None, ge=5, le=35), site_id: str = Query("jezero", alias="site")):
+    site(None, site_id)  # 404 if unknown
+    return png(_zones_png(None if slope_limit is None else round(float(slope_limit), 1), site_id))
+
+
+@lru_cache(maxsize=16)
+def _zones_png(limit, name) -> bytes:
+    z = site(limit, name).zone
     rgba = np.zeros(z.shape + (4,), "uint8")
     rgba[z == 1] = (245, 166, 35, 150)  # caution
     rgba[z == 2] = (208, 2, 27, 170)    # no-go
-    return png(rgba)
+    return png_bytes(rgba)
 
 
 @app.get("/api/minerals")
@@ -314,30 +357,49 @@ def minerals_legend():
 
 @app.get("/api/layers/minerals.png")
 def minerals_layer(site_id: str = Query("jezero", alias="site")):
-    s = site(None, site_id)
-    if getattr(s, "minerals", None) is None:
+    if getattr(site(None, site_id), "minerals", None) is None:
         raise HTTPException(404, "No mineral map for this site.")
+    return png(_minerals_png(site_id))
+
+
+@lru_cache(maxsize=len(SITES))
+def _minerals_png(name) -> bytes:
+    s = site(None, name)
     from pipeline.minerals import KEY
     m = s.minerals
     rgba = np.zeros(m.shape + (4,), "uint8")
     for i, (_, hi, med) in enumerate(KEY, start=1):
         rgba[m == i] = (*hi, 200)
         rgba[m == 100 + i] = (*med, 150)
-    return png(rgba)
+    return png_bytes(rgba)
 
 
 @app.get("/api/layers/hillshade.png")
 def hillshade(site_id: str = Query("jezero", alias="site")):
-    s = site(None, site_id)
+    site(None, site_id)  # 404 if unknown
+    return png(_hillshade_png(site_id))
+
+
+@lru_cache(maxsize=len(SITES))
+def _hillshade_png(name) -> bytes:
+    s = site(None, name)
     h = LightSource(315, 45).hillshade(np.nan_to_num(s.height, nan=float(np.nanmean(s.height))),
                                        dx=s.dx, dy=s.dy, vert_exag=2)
     g = (h * 255).astype("uint8")
-    return png(np.dstack([g, g, g, np.full_like(g, 255)]))
+    return png_bytes(np.dstack([g, g, g, np.full_like(g, 255)]))
 
 
 @app.get("/api/layers/safe_range.png")
-def safe_range(lon: float, lat: float, site_id: str = Query("jezero", alias="site")):
-    s = site(None, site_id)
+def safe_range(lon: float = num_q(), lat: float = num_q(), site_id: str = Query("jezero", alias="site"),
+               slope_limit: Optional[float] = num_q(None, ge=5, le=35), o2_hours: Optional[float] = num_q(None, gt=0, le=24),
+               o2_reserve: Optional[float] = num_q(None, ge=0, lt=1), walk_speed_kmh: Optional[float] = num_q(None, gt=0, le=10)):
+    """Where you can walk to AND get back from, with the same mission settings as the plan."""
+    s = site(slope_limit, site_id).with_settings(o2_hours=o2_hours, o2_reserve=o2_reserve, walk_speed_kmh=walk_speed_kmh)
+    cell_of(s, lon, lat, "base")
+    try:
+        s._check(s.lonlat_to_cell(lon, lat), "base")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     ok = s.safe_range((lon, lat))
     rgba = np.zeros(ok.shape + (4,), "uint8")
     rgba[~ok] = (0, 0, 0, 140)  # darken what you can't reach and come back from
