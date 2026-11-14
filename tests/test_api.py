@@ -21,7 +21,7 @@ def test_plan_ok():
 
 def test_plan_bad_stop_gives_clear_error():
     r = c.post("/api/plan", json={"base": BASE, "stops": [[10.0, 10.0]]})
-    assert r.status_code == 422 and "outside" in r.json()["detail"]
+    assert r.status_code == 422 and "outside the map" in r.json()["detail"]
 
 
 def test_slider_changes_route_risk():
@@ -93,3 +93,29 @@ def test_radio_in_plan_and_layer():
     assert tall["share_in_contact"] >= short["share_in_contact"]
     img = c.get(f"/api/layers/radio.png?lon={BASE[0]}&lat={BASE[1]}")
     assert img.status_code == 200 and img.content[:4] == b"\x89PNG"
+
+
+def test_errors_are_plain_sentences():
+    r = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47]] * 7})
+    assert r.status_code == 422 and r.json()["detail"].startswith("Too many stops")
+    r = c.post("/api/plan", json={"base": ["x", 18.4], "stops": [[77.46, 18.47]]})
+    assert "must be a number" in r.json()["detail"]
+    r = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47]], "o2_reserve": 1.0})
+    assert "oxygen reserve" in r.json()["detail"]
+
+
+def test_sun_check_needs_both_inputs():
+    r = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47]], "ls": 10})
+    assert r.status_code == 422 and "both" in r.json()["detail"]
+
+
+def test_slider_copies_share_the_big_arrays():
+    from api.main import site
+    a, b = site(None), site(12.0)
+    assert a.slope is b.slope and a.zone is not b.zone
+
+
+def test_convert_round_trip():
+    xy = c.get(f"/api/convert?lon={BASE[0]}&lat={BASE[1]}").json()
+    ll = c.get(f"/api/convert?x={xy['x']}&y={xy['y']}").json()
+    assert abs(ll["lon"] - BASE[0]) < 1e-9 and abs(ll["lat"] - BASE[1]) < 1e-9

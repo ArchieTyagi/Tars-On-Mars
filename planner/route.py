@@ -25,6 +25,8 @@ class Site:
         se = d["slope_err"] if "slope_err" in d else None
         self.slope_err = se if se is not None and np.isfinite(se).any() else None
         self.set_projection(self.crs, self.radius)
+        mf = ROOT / "data" / name / "minerals.npz"
+        self.minerals = np.load(mf)["code"] if mf.exists() else None
         kx = float(d["kx"]) if "kx" in d else 1.0
         self.ground = d["ground"] if "ground" in d else None
         self.dx, self.dy = self.a * kx, abs(self.e)  # real ground size of a cell, meters
@@ -58,9 +60,9 @@ class Site:
     def _check(self, cell, label):
         r, c = cell
         if not (0 <= r < self.zone.shape[0] and 0 <= c < self.zone.shape[1]):
-            raise ValueError(f"{label} is outside the map")
+            raise ValueError(f"The {label} is outside the map data.")
         if self.zone[r, c] == NOGO:
-            raise ValueError(f"{label} is on NO-GO ground ({self.slope[r, c]:.0f} deg)")
+            raise ValueError(f"The {label} is on NO-GO ground ({self.slope[r, c]:.0f} deg slope). Pick a spot nearby.")
 
     def time_cost(self):
         """Hours per meter walked on each cell, inf on NO-GO."""
@@ -167,7 +169,9 @@ class Site:
                 table[i, j] = cum[q]
         if not np.isfinite(table).all():
             bad = [i for i in range(1, len(pts)) if not np.isfinite(table[0, i])]
-            raise ValueError(f"no safe way to stop(s) {bad}")
+            names = ", ".join(f"stop {i}" for i in bad)
+            raise ValueError(f"There's no safe way to reach {names} from base with these slope limits. "
+                             "Move it, or try a higher slope limit to see what blocks it.")
 
         best = min(itertools.permutations(range(1, len(pts))),
                    key=lambda o: sum(table[a, b] for a, b in zip((0,) + o, o + (0,))))
@@ -206,9 +210,21 @@ class Site:
         targets = pick_targets(self, path_ll, full, score, why, elapsed)
         scout = {"targets": targets, "uncertain_share": round(float((score > 0).mean()), 3),
                  **flight_plan(self, base, targets, self.rules.get("scout_range_m", 700.0))}
+        weather = None
+        if self.body == "mars" and ls_deg is not None and start_ltst_h is not None:
+            from pipeline.mars_time import MARS_HOUR_IN_EARTH_HOURS as _mh
+            from pipeline.weather import summary
+            weather = summary(ls_deg, start_ltst_h + np.asarray(elapsed) / _mh)
         from planner.radio import route_contact
         radio = route_contact(self, pts[0], full, elapsed,
                               float(self.rules.get("base_antenna_m", 3.0)), float(self.rules.get("suit_antenna_m", 2.0)))
+        stop_minerals = None
+        if getattr(self, "minerals", None) is not None:
+            from pipeline.minerals import name_of
+            stop_minerals = []
+            for i, p in enumerate(pts[1:], start=1):
+                n, conf = name_of(int(self.minerals[p]))
+                stop_minerals.append({"stop": i, "mineral": n, "confidence": conf})
         return {
             "order": list(best),
             "km": round(sum(l["km"] for l in legs), 2),
@@ -227,6 +243,9 @@ class Site:
             "light": light,
             "scout": scout,
             "radio": radio,
+            "weather": weather,
+            "stop_minerals": stop_minerals,
             "legs": legs,
             "path": path_ll,
+            "path_xy": [[round(self.x0 + (c + 0.5) * self.a, 1), round(self.y0 + (r + 0.5) * self.e, 1)] for r, c in full],
         }
