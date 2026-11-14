@@ -59,10 +59,11 @@ class Site:
 
     def _check(self, cell, label):
         r, c = cell
+        the = label[0].upper() + label[1:] if label[-1].isdigit() else f"The {label}"
         if not (0 <= r < self.zone.shape[0] and 0 <= c < self.zone.shape[1]):
-            raise ValueError(f"The {label} is outside the map data.")
+            raise ValueError(f"{the} is outside the map data.")
         if self.zone[r, c] == NOGO:
-            raise ValueError(f"The {label} is on NO-GO ground ({self.slope[r, c]:.0f} deg slope). Pick a spot nearby.")
+            raise ValueError(f"{the} is on NO-GO ground ({self.slope[r, c]:.0f} deg slope). Pick a spot nearby.")
 
     def time_cost(self):
         """Hours per meter walked on each cell, inf on NO-GO."""

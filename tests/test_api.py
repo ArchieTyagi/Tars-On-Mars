@@ -73,16 +73,38 @@ def test_sun_check_in_plan():
 
 
 def test_observe_changes_the_next_plan():
-    c.delete("/api/observe")
     body = {"base": BASE, "stops": [[77.46, 18.47]]}
     a = c.post("/api/plan", json=body).json()
     mid = a["path"][len(a["path"]) // 4]
-    assert c.post("/api/observe", json={"lonlat": mid, "finding": "blocked", "radius_m": 30}).status_code == 200
-    b = c.post("/api/plan", json=body).json()
+    seen = [{"lonlat": mid, "finding": "blocked", "radius_m": 30}]
+    b = c.post("/api/plan", json={**body, "observations": seen}).json()
     assert b["path"] != a["path"] and len(b["observations"]) == 1
-    assert c.post("/api/observe", json={"lonlat": mid, "finding": "maybe"}).status_code == 422
-    c.delete("/api/observe")
+    bad = c.post("/api/plan", json={**body, "observations": [{"lonlat": mid, "finding": "maybe"}]})
+    assert bad.status_code == 422
+    # reports belong to one request only: the next plain plan is unchanged
     assert c.post("/api/plan", json=body).json()["path"] == a["path"]
+
+
+def test_bad_inputs_get_clear_422_not_crash():
+    nan = '{"base":[NaN,18.4],"stops":[[77.46,18.47]]}'
+    bodies = [{"base": BASE, "stops": [[77.46]]}, {"base": BASE, "stops": [[77.46, 18.47, 5]]},
+              {"base": [1e308, 1e308], "stops": [[77.46, 18.47]]},
+              {"base": BASE, "stops": [[77.46, 18.47]], "observations": [{"lonlat": [0, 0], "finding": "safe"}]}]
+    for b in bodies:
+        r = c.post("/api/plan", json=b)
+        assert r.status_code == 422 and "integer" not in r.json()["detail"], (b, r.text)
+    r = c.post("/api/plan", content=nan, headers={"content-type": "application/json"})
+    assert r.status_code == 422 and "real number" in r.json()["detail"]
+    for u in ["/api/point?lon=nan&lat=1", "/api/convert?lon=inf&lat=1", "/api/sun?ls=400&ltst_h=12",
+              "/api/sol_to_ls?sol=inf", "/api/terrain?step=0", "/api/layers/zones.png?slope_limit=1000",
+              "/api/layers/safe_range.png?lon=0&lat=0", "/api/layers/radio.png?lon=77.45&lat=18.44&base_antenna_m=-1"]:
+        assert c.get(u).status_code == 422, u
+    assert c.get("/api/point?lon=0&lat=0").json() == {"inside": False}
+
+
+def test_safe_range_uses_mission_settings():
+    u = f"/api/layers/safe_range.png?lon={BASE[0]}&lat={BASE[1]}"
+    assert c.get(u + "&o2_hours=0.2").content != c.get(u + "&o2_hours=12").content
 
 
 def test_radio_in_plan_and_layer():
