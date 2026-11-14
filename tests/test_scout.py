@@ -31,3 +31,10 @@ def test_flight_plan_splits_long_hops():
     fp = flight_plan(s, ll(s, 300, 10), [{"lonlat": list(ll(s, 300, 400))}], range_m=700)
     # base -> target is 390 cells * 4 m = 1560 m -> 3 hops each way
     assert fp["flights"] == 6 and all(h["m"] <= 700 for h in fp["hops"])
+
+
+def test_no_targets_means_no_flights():
+    from planner.scout import flight_plan
+    from planner.route import Site
+    fp = flight_plan(Site("jezero"), (77.4508, 18.4447), [])
+    assert fp["flights"] == 0 and fp["hops"] == [] and fp["total_km"] == 0

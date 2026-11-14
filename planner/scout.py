@@ -84,6 +84,8 @@ def flight_plan(site, base_lonlat, targets, range_m=700.0):
         r, c = site.lonlat_to_cell(*ll)
         return np.array([c * site.dx, r * site.dy])
 
+    if not targets:
+        return {"flights": 0, "total_km": 0.0, "range_m": range_m, "hops": []}
     stops = [list(base_lonlat)] + [t["lonlat"] for t in targets] + [list(base_lonlat)]
     hops, total = [], 0.0
     for a, b in zip(stops, stops[1:]):

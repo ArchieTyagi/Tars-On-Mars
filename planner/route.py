@@ -87,7 +87,7 @@ class Site:
     def safe_range(self, base):
         """Cells you can walk to AND get back from on usable oxygen."""
         usable = self.rules["o2_hours"] * (1 - self.rules["o2_reserve"])
-        return self.home_field(base) * 2 <= usable
+        return self.home_field(base) * 2 + float(self.rules.get("stop_minutes", 0)) / 60.0 <= usable
 
     def leg_stats(self, path):
         p = np.array(path)
@@ -148,7 +148,10 @@ class Site:
             "ls": ls_deg, "start_ltst_h": start_ltst_h,
             "end_ltst_h": round(float(ltst[-1] % 24), 2),
             "sun_el_start": round(float(el[0]), 1), "sun_el_end": round(float(el[-1]), 1),
-            "low_sun": bool((el < 15).any()), "sunset_before_home": bool((el <= 0).any()),
+            "low_sun": bool((el < 15).any()),
+            "starts_in_dark": bool(el[0] <= 0),
+            "sunset_before_home": bool(el[0] > 0 and (el <= 0).any()),
+            "ends_in_dark": bool(el[-1] <= 0),
             "dark": [bool(x) for x in dark_here],
             "hidden_hazards": warnings,
         }
@@ -178,15 +181,19 @@ class Site:
                    key=lambda o: sum(table[a, b] for a, b in zip((0,) + o, o + (0,))))
         order = (0,) + best + (0,)
 
-        legs, full = [], []
+        legs, full, arrive = [], [], []
         for a, b in zip(order, order[1:]):
             path = mcps[a].traceback(pts[b])
             dist, hrs, smax, caut = self.leg_stats(path)
             legs.append({"from": a, "to": b, "km": round(dist / 1000, 2), "hours": round(hrs, 2),
                          "max_slope": round(smax, 1), "caution_cells": caut})
             full += path if not full else path[1:]
+            arrive.append(len(full) - 1)  # index where this leg ends (a stop, or base at the very end)
 
-        hours = sum(l["hours"] for l in legs)
+        walk_hours = sum(l["hours"] for l in legs)
+        stop_h = float(self.rules.get("stop_minutes", 0)) / 60.0
+        n_stops = len(pts) - 1
+        hours = walk_hours + n_stops * stop_h  # whole outing: walking + time spent working at each stop
         usable = self.rules["o2_hours"] * (1 - self.rules["o2_reserve"])
         home = self.home_field(base)
         p = np.array(full)
@@ -194,6 +201,8 @@ class Site:
         s = self.slope[p[:, 0], p[:, 1]]
         dt = step / (self.rules["walk_speed_kmh"] * 1000) * (1 + self.rules["slope_slowdown_per_deg"] * (s[1:] + s[:-1]) / 2)
         elapsed = np.concatenate([[0.0], np.cumsum(dt)])
+        for i in arrive[:-1]:          # time at each stop is spent before walking on
+            elapsed[i + 1:] += stop_h
         back = home[p[:, 0], p[:, 1]]
         margin = usable - elapsed - back
         ponr = None
@@ -230,10 +239,14 @@ class Site:
             "order": list(best),
             "km": round(sum(l["km"] for l in legs), 2),
             "hours": round(hours, 2),
+            "walk_hours": round(walk_hours, 2),
+            "stop_hours": round(n_stops * stop_h, 2),
+            "stop_arrivals": [{"stop": int(order[k + 1]), "index": int(i), "arrive_h": round(float(elapsed[i]), 2),
+                               "leave_h": round(float(elapsed[i]) + stop_h, 2)} for k, i in enumerate(arrive[:-1])],
             "max_slope": max(l["max_slope"] for l in legs),
             "o2_ok": hours <= usable,
             "o2_margin_h": round(usable - hours, 2),
-            "settings": {k: self.rules[k] for k in ("o2_hours", "o2_reserve", "walk_speed_kmh")},
+            "settings": {k: self.rules.get(k, 0) for k in ("o2_hours", "o2_reserve", "walk_speed_kmh", "stop_minutes")},
             "usable_o2_h": round(usable, 2),
             "point_of_no_return": ponr,
             "margin_h": [round(float(x), 2) for x in margin],
