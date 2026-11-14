@@ -43,6 +43,11 @@ def along(ls, ltst_h):
     return out
 
 
+def _sky(ls):
+    from pipeline.dust import sky
+    return sky(ls)
+
+
 def summary(ls, ltst_h):
     a = along(ls, ltst_h)
     if a is None:
@@ -58,6 +63,7 @@ def summary(ls, ltst_h):
         "ground_c_min": min(gnd) if gnd else None, "ground_c_max": max(gnd) if gnd else None,
         "wind_ms_max": max(wind) if wind else None,
         "per_point": a,
+        "sky": _sky(ls),
         "source": w["source"],
         "note": "typical conditions from Perseverance's MEDA station for this season and hour, not a forecast",
         "wind_note": (None if wind else

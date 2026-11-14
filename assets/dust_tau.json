@@ -1,0 +1,133 @@
+{
+ "source": "Mark Lemmon, The Perseverance Rover's Mastcam-Z Visible Aerosol Optical Depth Record, Mendeley Data v2 (2026), doi:10.17632/gktjp9jptb.2, CC BY 4.0",
+ "status": "PRELIMINARY (so marked by the author of the data)",
+ "meaning": "Optical depth: how much the air dims the sun. It counts dust and thin ice cloud together. 0.3-0.5 is a normal clear day on Mars, above 1 is a dusty sky.",
+ "channel_nm": 544,
+ "measurements": 2028,
+ "sols": [
+  16,
+  1717
+ ],
+ "bins": [
+  {
+   "ls_from": 0,
+   "ls_to": 30,
+   "n": 190,
+   "sols": 103,
+   "median": 0.516,
+   "p10": 0.422,
+   "p90": 0.632,
+   "max": 1.269
+  },
+  {
+   "ls_from": 30,
+   "ls_to": 60,
+   "n": 204,
+   "sols": 151,
+   "median": 0.434,
+   "p10": 0.371,
+   "p90": 0.513,
+   "max": 0.89
+  },
+  {
+   "ls_from": 60,
+   "ls_to": 90,
+   "n": 242,
+   "sols": 167,
+   "median": 0.435,
+   "p10": 0.371,
+   "p90": 0.499,
+   "max": 0.604
+  },
+  {
+   "ls_from": 90,
+   "ls_to": 120,
+   "n": 230,
+   "sols": 155,
+   "median": 0.496,
+   "p10": 0.403,
+   "p90": 0.599,
+   "max": 0.805
+  },
+  {
+   "ls_from": 120,
+   "ls_to": 150,
+   "n": 239,
+   "sols": 151,
+   "median": 0.412,
+   "p10": 0.284,
+   "p90": 0.622,
+   "max": 1.102
+  },
+  {
+   "ls_from": 150,
+   "ls_to": 180,
+   "n": 204,
+   "sols": 128,
+   "median": 0.433,
+   "p10": 0.289,
+   "p90": 0.601,
+   "max": 1.385
+  },
+  {
+   "ls_from": 180,
+   "ls_to": 210,
+   "n": 112,
+   "sols": 79,
+   "median": 0.575,
+   "p10": 0.48,
+   "p90": 0.847,
+   "max": 1.423
+  },
+  {
+   "ls_from": 210,
+   "ls_to": 240,
+   "n": 125,
+   "sols": 76,
+   "median": 1.085,
+   "p10": 0.947,
+   "p90": 1.525,
+   "max": 2.326
+  },
+  {
+   "ls_from": 240,
+   "ls_to": 270,
+   "n": 104,
+   "sols": 69,
+   "median": 0.961,
+   "p10": 0.853,
+   "p90": 1.065,
+   "max": 1.205
+  },
+  {
+   "ls_from": 270,
+   "ls_to": 300,
+   "n": 108,
+   "sols": 82,
+   "median": 0.716,
+   "p10": 0.592,
+   "p90": 0.831,
+   "max": 1.012
+  },
+  {
+   "ls_from": 300,
+   "ls_to": 330,
+   "n": 124,
+   "sols": 95,
+   "median": 0.761,
+   "p10": 0.54,
+   "p90": 1.572,
+   "max": 1.788
+  },
+  {
+   "ls_from": 330,
+   "ls_to": 360,
+   "n": 146,
+   "sols": 102,
+   "median": 0.843,
+   "p10": 0.688,
+   "p90": 1.052,
+   "max": 1.373
+  }
+ ]
+}
