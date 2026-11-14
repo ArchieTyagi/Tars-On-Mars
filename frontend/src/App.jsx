@@ -1,48 +1,67 @@
-import { useEffect, useState } from "react";
-import MapView from "./MapView.jsx";
-import Panel from "./Panel.jsx";
+import { Component, lazy, Suspense, useCallback, useEffect, useState } from "react";
+import Landing from "./landing/Landing.jsx";
+import { routeOf } from "./lib/router.js";
 
-const MAX_STOPS = 6;
+// The planner brings the map and the 3D code with it, so it is only downloaded when someone opens it.
+const Planner = lazy(() => import("./planner/Planner.jsx"));
+
+class Catch extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <main className="fullmsg">
+        <p className="label">Something broke</p>
+        <h1>The planner stopped.</h1>
+        <p>Reload the page to start it again. Your base and stops are not saved.</p>
+        <button className="btn" onClick={() => window.location.reload()}>Reload</button>
+      </main>
+    );
+  }
+}
 
 export default function App() {
-  const [site, setSite] = useState(null);
-  const [error, setError] = useState("");
-  const [base, setBase] = useState(null); // [lon, lat]
-  const [stops, setStops] = useState([]); // [[lon, lat], ...]
-  const [showZones, setShowZones] = useState(true);
-  const [flyTo, setFlyTo] = useState(null);
+  const [path, setPath] = useState(window.location.pathname);
 
   useEffect(() => {
-    fetch("/api/site")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setSite)
-      .catch(() => setError("Can't reach the server. Is it running on port 8000?"));
+    const onPop = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  function handleMapClick(lonlat) {
-    if (!base) return setBase(lonlat);
-    if (stops.length >= MAX_STOPS) return;
-    setStops([...stops, lonlat]);
-  }
+  const go = useCallback((to) => {
+    if (to !== window.location.pathname) window.history.pushState(null, "", to);
+    setPath(to);
+    window.scrollTo(0, 0);
+  }, []);
 
+  const route = routeOf(path);
+
+  useEffect(() => {
+    document.title = route === "planner" ? "Route planner · TARS on Mars" : "TARS on Mars";
+  }, [route]);
+
+  if (route === "landing") return <Landing onOpen={() => go("/planner")} />;
+  if (route === "planner") {
+    return (
+      <Catch>
+        <Suspense fallback={<main className="fullmsg"><p className="label">Loading the planner</p></main>}>
+          <Planner onHome={() => go("/")} />
+        </Suspense>
+      </Catch>
+    );
+  }
   return (
-    <div className="app">
-      <Panel
-        site={site}
-        error={error}
-        base={base}
-        stops={stops}
-        maxStops={MAX_STOPS}
-        showZones={showZones}
-        onToggleZones={() => setShowZones(!showZones)}
-        onUseLandingSite={() => site && setBase(site.default_base)}
-        onRemoveStop={(i) => setStops(stops.filter((_, j) => j !== i))}
-        onClear={() => { setBase(null); setStops([]); }}
-        onGoTo={(lonlat) => setFlyTo([...lonlat])}
-      />
-      {site && (
-        <MapView site={site} base={base} stops={stops} showZones={showZones} onClick={handleMapClick} flyTo={flyTo} />
-      )}
-    </div>
+    <main className="fullmsg">
+      <p className="label">404</p>
+      <h1>No such page.</h1>
+      <button className="btn" onClick={() => go("/")}>Back to the front page</button>
+    </main>
   );
 }
