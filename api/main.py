@@ -231,7 +231,9 @@ def site_info(site_id: str = Query("jezero", alias="site")):
             "has_minerals": getattr(s, "minerals", None) is not None,
             "has_photo": _photo(site_id) is not None,
             "has_rover_track": _rover(site_id) is not None,
+            "has_helicopter_flights": _helicopter(site_id) is not None,
             "layers": layer_list(site_id, s),
+            "context": _context(site_id),
             "sun_check": s.body == "mars",
             "crs": s.crs,
             "extent_xy": {"left": s.x0, "top": s.y0, "right": s.x0 + s.a * s.zone.shape[1],
@@ -445,12 +447,31 @@ def _rover(name):
         return None
     return {**track, **rover.summary(site(None, name), track),
             "note": "The rover drove this ground safely, so it is ground truth for our map. A rover is not a "
-                    "person on foot: this proves the map's slopes, not the walking limits."}
+                    "person on foot: this proves the map's slopes, not the walking limits.",
+            "whole": rover.load_whole(name)}
+
+
+@lru_cache(maxsize=len(SITES))
+def _helicopter(name):
+    from pipeline import helicopter
+    data = helicopter.load(name)
+    return None if data is None else helicopter.with_box(site(None, name), data)
+
+
+@app.get("/api/helicopter")
+def helicopter_flights(site_id: str = Query("jezero", alias="site")):
+    """Where the Ingenuity helicopter really flew: every flight as a line, with NASA's facts for it."""
+    site(None, site_id)  # 404 if unknown
+    h = _helicopter(site_id)
+    if h is None:
+        raise HTTPException(404, "No helicopter flights for this site.")
+    return h
 
 
 @app.get("/api/rover")
 def rover_track(site_id: str = Query("jezero", alias="site")):
-    """Perseverance's real drive inside the map, its stops with the tilt it measured, and what our map says there."""
+    """Perseverance's real drive inside the map, its stops with the tilt it measured, and what our map says there.
+    `whole` is the whole drive, also outside the map, for drawing only."""
     site(None, site_id)  # 404 if unknown
     r = _rover(site_id)
     if r is None:
@@ -488,6 +509,38 @@ def photo_layer(m_per_px: int = Query(2, description="meters per pixel: 1, 2 or 
     from pipeline.photo import SOURCE
     return Response(_photo_jpg(site_id, m_per_px), media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400", "X-Source": SOURCE,
+                             "Access-Control-Expose-Headers": "X-Source"})
+
+
+@lru_cache(maxsize=len(SITES))
+def _context(name):
+    """Wider pictures around the planning box, far to near (pipeline/context.py). Empty when a site has none."""
+    from pipeline import context
+    return [{"id": lv["id"], "name": lv["name"], "url": f"/api/layers/context.jpg?site={name}&level={lv['id']}",
+             "extent_xy": lv["extent_xy"], "m_per_px": lv["m_per_px"], "about": lv["about"],
+             "note": context.NOTE, "source": lv["source"]} for lv in context.info(name)]
+
+
+@lru_cache(maxsize=8)
+def _context_jpg(name, level) -> bytes:
+    from pipeline import context
+    return context.jpg_bytes(name, level)
+
+
+@app.get("/api/layers/context.jpg")
+def context_layer(level: Optional[str] = Query(None, description="which picture, see `context` in /api/site. Default: the nearest one"),
+                  site_id: str = Query("jezero", alias="site")):
+    """A wider picture of the ground around the planning box, for showing where the box sits.
+    The planner does not use it: no checked height map is loaded out there."""
+    site(None, site_id)  # 404 if unknown
+    levels = _context(site_id)
+    if not levels:
+        raise HTTPException(404, "No wider picture for this site.")
+    lv = levels[-1] if level is None else next((x for x in levels if x["id"] == level), None)
+    if lv is None:
+        raise HTTPException(404, f"No such picture. This site has: {', '.join(x['id'] for x in levels)}.")
+    return Response(_context_jpg(site_id, lv["id"]), media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400", "X-Source": lv["source"],
                              "Access-Control-Expose-Headers": "X-Source"})
 
 
@@ -652,6 +705,8 @@ def warm_up():
         _slope_png(n)
         _photo(n)
         _rover(n)
+        _helicopter(n)
+        _context(n)
 
 
 def _warm_in_background():

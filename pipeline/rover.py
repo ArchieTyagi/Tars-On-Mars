@@ -2,7 +2,8 @@
 ground truth we can show on the map and check our zones against.
 
 Source: NASA/JPL-Caltech, Mars 2020 mission rover location data (M20_traverse.json, M20_waypoints.json).
-Run: python -m pipeline.rover   (needs the two files in data/rover/, writes assets/rover_track.json)
+Run: python -m pipeline.rover   (needs the two files in data/rover/, writes assets/rover_track.json
+     and assets/rover_whole.json, the whole drive for drawing outside the box)
 """
 import json
 import math
@@ -30,6 +31,19 @@ def clip(points, inside):
     if len(cur) >= 2:
         runs.append(cur)
     return runs
+
+
+def thin(points, min_m, dist):
+    """Drop points that are closer than min_m to the last point kept. The first and the last point
+    always stay, so the line still starts and ends in the right place."""
+    if len(points) <= 2:
+        return list(points)
+    out = [points[0]]
+    for p in points[1:-1]:
+        if dist(out[-1], p) >= min_m:
+            out.append(p)
+    out.append(points[-1])
+    return out
 
 
 def _inside(site):
@@ -71,6 +85,44 @@ def load(name="jezero"):
     if not FILE.exists():
         return None
     t = json.loads(FILE.read_text())
+    return t if t.get("site") == name else None
+
+
+WHOLE = ROOT / "assets" / "rover_whole.json"
+WHOLE_SPACING_M = 5.0
+MARS_RADIUS_M = 3396190.0
+
+
+def build_whole(name="jezero"):
+    """The whole drive, also where it leaves our box, thinned to one point every 5 m so the file stays
+    small. It is only drawn as a line on the map. Nothing is checked against it outside the box,
+    because we have no height map loaded there."""
+    src = ROOT / "data" / "rover"
+    dist = lambda a, b: _meters(a, b, MARS_RADIUS_M)
+    segments = []
+    for f in json.load(open(src / "M20_traverse.json"))["features"]:
+        pts = [[round(x, 7), round(y, 7)] for x, y, *_ in f["geometry"]["coordinates"]]
+        if len(pts) >= 2:
+            segments.append({"sol": int(f["properties"]["sol"]), "points": thin(pts, WHOLE_SPACING_M, dist)})
+    segments.sort(key=lambda s: s["sol"])
+    way = [f["properties"] for f in json.load(open(src / "M20_waypoints.json"))["features"]]
+    last = way[-1]
+    out = {"source": SOURCE, "site": name, "segments": segments,
+           "km": round(float(last["dist_total_m"]) / 1000, 2),
+           "sols": [segments[0]["sol"], segments[-1]["sol"]],
+           "last": {"lonlat": [round(last["lon"], 7), round(last["lat"], 7)], "sol": int(last["sol"])},
+           "note": "The whole drive in the NASA file we downloaded, up to its last sol. The length is the rover's "
+                   "own odometer. Outside the planning box the line is only drawn, not checked against our map."}
+    WHOLE.write_text(json.dumps(out, separators=(",", ":")))
+    print(f"whole drive: {len(segments)} drives, {sum(len(s['points']) for s in segments)} points, "
+          f"{out['km']} km, sols {out['sols']}, {WHOLE.stat().st_size // 1024} KB")
+    return WHOLE
+
+
+def load_whole(name="jezero"):
+    if not WHOLE.exists():
+        return None
+    t = json.loads(WHOLE.read_text())
     return t if t.get("site") == name else None
 
 
@@ -119,3 +171,4 @@ def summary(site, track):
 
 if __name__ == "__main__":
     build()
+    build_whole()

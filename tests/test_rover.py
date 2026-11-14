@@ -107,3 +107,46 @@ def test_squares_counts_every_square_a_line_touches():
 def test_landing_is_not_given_a_wrong_day():
     landing = c.get("/api/rover").json()["landing"]
     assert "sol" not in landing and "first drive" in landing["note"]   # the file's first record is sol 13, landing was sol 0
+
+
+# ---- the whole drive, also outside our box (shown on the darkened ground around it) ---------------
+
+WHOLE = ROOT / "assets" / "rover_whole.json"
+
+
+def test_whole_drive_starts_at_the_landing_site_and_is_in_order():
+    w = json.loads(WHOLE.read_text())
+    t = json.loads(ASSET.read_text())
+    sols = [s["sol"] for s in w["segments"]]
+    assert sols == sorted(sols) and sols[0] == 14 and w["sols"] == [sols[0], sols[-1]]
+    assert meters(w["segments"][0]["points"][0], t["landing"]["lonlat"]) < 30
+    assert all(len(s["points"]) >= 2 for s in w["segments"]) and WHOLE.stat().st_size < 400_000
+
+
+def test_whole_drive_length_is_nasas_odometer_and_the_path_agrees():
+    w = json.loads(WHOLE.read_text())
+    km_path = sum(meters(a, b) for s in w["segments"] for a, b in zip(s["points"], s["points"][1:])) / 1000
+    assert w["km"] > 40  # NASA's own total at the last stop in the file
+    assert abs(km_path - w["km"]) < 0.04 * w["km"]  # our thinned line is within 4% of the odometer
+
+
+def test_whole_drive_goes_far_beyond_the_box_and_the_inside_part_matches_the_track():
+    s = site(None, "jezero")
+    w = json.loads(WHOLE.read_text())
+    inside = rover._inside(s)
+    pts = [p for seg in w["segments"] for p in seg["points"]]
+    assert sum(not inside(p) for p in pts) > 0.3 * len(pts)
+    km_in = sum(meters(a, b) for seg in w["segments"] for a, b in zip(seg["points"], seg["points"][1:])
+                if inside(a) and inside(b)) / 1000
+    assert abs(km_in - c.get("/api/rover").json()["km_on_map"]) < 0.04 * km_in
+
+
+def test_last_position_is_the_end_of_the_last_drive():
+    w = json.loads(WHOLE.read_text())
+    assert w["last"]["sol"] == w["sols"][1]
+    assert meters(w["last"]["lonlat"], w["segments"][-1]["points"][-1]) < 30
+
+
+def test_api_carries_the_whole_drive():
+    j = c.get("/api/rover").json()
+    assert j["whole"]["km"] > j["km_on_map"] and j["whole"]["segments"] and j["whole"]["note"]

@@ -1,0 +1,16 @@
+{
+ "id": "region",
+ "name": "Around Jezero Crater",
+ "about": "About 237 km around Jezero Crater, from the same Viking mosaic at its full sharpness (232 m per pixel).",
+ "source": "USGS Astrogeology Science Center, Mars Viking Colorized Global Mosaic 232m (MDIM 2.1), public domain. Colorized by NASA Ames. Image data: NASA/JPL/USGS",
+ "extent_xy": {
+  "left": 4471071.910812879,
+  "top": 1212352.7977887606,
+  "right": 4708170.700905679,
+  "bottom": 975254.0076959606
+ },
+ "cols": 1024,
+ "rows": 1024,
+ "m_per_px": 231.5417872,
+ "made_from": "the source at its full sharpness"
+}

@@ -1,0 +1,91 @@
+:root {
+  --bg: #010101;
+  --bg-2: #0b0b0a;
+  --bg-3: #141413;
+  --ink: #f1f0ea;
+  --dim: rgba(241, 240, 234, 0.6);
+  --faint: rgba(241, 240, 234, 0.36);
+  --line: rgba(241, 240, 234, 0.16);
+  --amber: #f5a623;
+  --red: #ff3b30;
+  --violet: #b085ff;
+  --sans: "Inter Tight Variable", "Inter Tight", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; min-height: 100%; }
+html { background: var(--bg); color-scheme: dark; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+h1, h2, h3, p, ol, ul, dl, dd, figure { margin: 0; }
+ol, ul { padding: 0; list-style: none; }
+a { color: inherit; }
+button, input, select { font: inherit; color: inherit; }
+::selection { background: var(--ink); color: var(--bg); }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* small uppercase technical label, used everywhere */
+.label {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.btn:hover:not(:disabled) { background: transparent; color: var(--ink); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+.btn.ghost:hover:not(:disabled) { border-color: var(--ink); }
+.btn.small { padding: 8px 10px; font-size: 11px; }
+
+.wordmark {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; text-decoration: none;
+}
+.mark { width: 10px; height: 10px; background: var(--ink); display: inline-block; }
+
+.fullmsg {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 18px;
+  padding: 8vw;
+}
+.fullmsg h1 { font-size: clamp(36px, 7vw, 96px); line-height: 0.95; letter-spacing: -0.03em; text-transform: uppercase; font-weight: 700; }
+.fullmsg p { max-width: 46ch; color: var(--dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
