@@ -1,0 +1,34 @@
+{
+ "box": "2 x 2 km at the Perseverance landing site, compared on a 1 m grid",
+ "gaps_usgs": 0.0,
+ "gaps_madnet": 0.0,
+ "height_diff_mean_m": -0.006846210919320583,
+ "height_diff_std_m": 0.32371363043785095,
+ "height_diff_p95_abs_m": 0.60107421875,
+ "slope_corr": 0.7860791400866036,
+ "slope_diff_std_deg": 4.995197296142578,
+ "slope_diff_p95_abs_deg": 9.64206314086914,
+ "p99_slope_usgs": 28.91676139831543,
+ "p99_slope_madnet": 38.41447448730469,
+ "at_10deg": {
+  "blocked_usgs": 0.150177,
+  "blocked_madnet": 0.18833425,
+  "flips": 0.08242475,
+  "madnet_says_safe_but_usgs_blocked": 0.02213375,
+  "share_of_usgs_blocked_missed": 0.147384419718066
+ },
+ "at_15deg": {
+  "blocked_usgs": 0.08251275,
+  "blocked_madnet": 0.11620075,
+  "flips": 0.062398,
+  "madnet_says_safe_but_usgs_blocked": 0.014355,
+  "share_of_usgs_blocked_missed": 0.17397311324613468
+ },
+ "at_20deg": {
+  "blocked_usgs": 0.04261125,
+  "blocked_madnet": 0.073004,
+  "flips": 0.04874825,
+  "madnet_says_safe_but_usgs_blocked": 0.00917775,
+  "share_of_usgs_blocked_missed": 0.21538326146264192
+ }
+}

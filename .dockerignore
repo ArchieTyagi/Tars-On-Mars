@@ -1,0 +1,13 @@
+data/
+!data/jezero/layers.npz
+!data/moon/layers.npz
+!data/jezero/minerals.npz
+!data/jezero/photo.npz
+out/
+**/node_modules
+**/__pycache__
+.pytest_cache
+.git
+docs/
+tests/
+validation/

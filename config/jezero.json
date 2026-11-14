@@ -3,8 +3,47 @@
   "body": "mars",
   "radius_m": 3396190,
   "dtm_url": "https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif",
+  "photo_url": "https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/mars2020_trn/HiRISE/JEZ_hirise_soc_006_orthoMosaic_25cm_Eqc_latTs0_lon0_first.tif",
   "center_lon": 77.43,
   "center_lat": 18.455,
   "half_size_m": 2500,
-  "chunk_rows": 500
+  "chunk_rows": 500,
+  "grid_m": 4,
+  "default_base": [
+    77.4508,
+    18.4447
+  ],
+  "source": "USGS HiRISE 1 m height map of Jezero (Mars 2020 Terrain Relative Navigation HiRISE DTM Mosaic, Fergason et al. 2020, doi:10.5066/P9REJ9JN)",
+  "context": [
+    {
+      "id": "planet",
+      "name": "Mars",
+      "url": "https://planetarymaps.usgs.gov/mosaic/Mars_Viking_MDIM21_ClrMosaic_global_232m.tif",
+      "k": 45,
+      "rows_per_block": 1,
+      "about": "The whole planet, from the mosaic of Viking orbiter photos. The colors were added by its makers, they are not what a camera saw.",
+      "source": "USGS Astrogeology Science Center, Mars Viking Colorized Global Mosaic 232m (MDIM 2.1), public domain. Colorized by NASA Ames. Image data: NASA/JPL/USGS",
+      "chunk": 8
+    },
+    {
+      "id": "region",
+      "name": "Around Jezero Crater",
+      "url": "https://planetarymaps.usgs.gov/mosaic/Mars_Viking_MDIM21_ClrMosaic_global_232m.tif",
+      "k": 1,
+      "rows_per_block": 1,
+      "half_size_m": 118549,
+      "about": "About 237 km around Jezero Crater, from the same Viking mosaic at its full sharpness (232 m per pixel).",
+      "source": "USGS Astrogeology Science Center, Mars Viking Colorized Global Mosaic 232m (MDIM 2.1), public domain. Colorized by NASA Ames. Image data: NASA/JPL/USGS",
+      "chunk": 16
+    },
+    {
+      "id": "mosaic",
+      "name": "The Jezero photo mosaic",
+      "url_key": "photo_url",
+      "k": 64,
+      "rows_per_block": 2,
+      "about": "The 21 km orbital photo mosaic that the planning box is cut from, shrunk to 16 m per pixel.",
+      "source_key": "photo"
+    }
+  ]
 }

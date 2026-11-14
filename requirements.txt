@@ -3,3 +3,11 @@ rasterio
 scikit-image
 matplotlib
 pytest
+fastapi
+uvicorn
+httpx
+pillow
+geopandas
+pyogrio
+pyproj
+scipy

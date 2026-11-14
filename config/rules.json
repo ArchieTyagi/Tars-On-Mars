@@ -11,5 +11,21 @@
   "walk_speed_kmh": 2.0,
   "slope_slowdown_per_deg": 0.03,
   "o2_hours": 8,
-  "o2_reserve": 0.25
+  "o2_reserve": 0.25,
+  "geology_to_ground": {
+    "_source": "USGS SIM 3464, Sun & Stack 2020, Jezero crater and Nili Planum, mapped at 1:75,000",
+    "Eolian bedform unit": "sand",
+    "Jezero fan 2 unit": "regolith",
+    "Jezero fan 1 unit": "regolith",
+    "Jezero floor unit": "bedrock",
+    "Lower etched unit": "bedrock",
+    "Upper etched unit": "bedrock",
+    "Crater rim unit": "bedrock",
+    "_default": "default"
+  },
+  "base_antenna_m": 3.0,
+  "suit_antenna_m": 2.0,
+  "stop_minutes": 15,
+  "_stop_minutes_note": "default time spent working at each stop; the user sets their own",
+  "climb_ignore_below_m": 0.5
 }

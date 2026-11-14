@@ -18,12 +18,21 @@ def load_rules():
     return json.loads((ROOT / "config" / "rules.json").read_text())
 
 
+GROUND = ["default", "bedrock", "regolith", "sand"]  # same order as pipeline/geology.py
+
+
 def classify(slope, rules, ground=None, limit_override=None):
-    """GO / CAUTION / NO-GO for every cell. ground = optional grid of type names."""
-    lim = np.full(slope.shape, float(limit_override or rules["slope_limit_deg"]["default"]), "float32")
-    if ground is not None and limit_override is None:
-        for name, deg in rules["slope_limit_deg"].items():
-            lim[ground == name] = deg
+    """GO / CAUTION / NO-GO for every cell.
+    ground = optional grid of ground-type codes (index into GROUND).
+    limit_override = the what-if slider, the limit on firm ground (default/bedrock). Looser ground
+    keeps its proportion: with the slider at 30 (1.5x the normal 20), sand goes from 10 to 15, never
+    to 30. So the slider can never make sand as steep as rock."""
+    base = float(rules["slope_limit_deg"]["default"])
+    scale = 1.0 if limit_override is None else float(limit_override) / base
+    lim = np.full(slope.shape, base * scale, "float32")
+    if ground is not None:
+        for i, name in enumerate(GROUND):
+            lim[ground == i] = rules["slope_limit_deg"].get(name, base) * scale
     zone = np.full(slope.shape, GO, "uint8")
     zone[slope >= lim * rules["caution_from"]] = CAUTION
     zone[(slope >= lim) | np.isnan(slope)] = NOGO
@@ -39,26 +48,48 @@ def walk_cost(slope, zone, rules):
     return cost.astype("float32")
 
 
+def site_config(name):
+    return json.loads((ROOT / "config" / f"{name}.json").read_text())
+
+
 def build(name="jezero"):
     rules = load_rules()
-    k = rules["grid_m"]
+    cfg = site_config(name)
+    k = cfg.get("grid_m", rules["grid_m"])
     with rasterio.open(ROOT / "data" / name / "dtm.tif") as src:
         dem = src.read(1)
         cell = src.res[0]
-        transform = src.transform * src.transform.scale(k, k)
         crs = src.crs
-    step = int(round(k / cell))
-    mid_lat = math.degrees((transform.f + transform.e * dem.shape[0] / step / 2) / 3396190.0)
-    kx = ground_scale_x(mid_lat)
+        step = max(1, int(round(k / cell)))
+        transform = src.transform * src.transform.scale(step, step)
+        mid_y = src.transform.f + src.transform.e * dem.shape[0] / 2
+    radius = float(cfg.get("radius_m", 3396190.0))
+    if "+proj=eqc" in crs.to_proj4():
+        # equirectangular grid: only true to size at the equator
+        kx = ground_scale_x(math.degrees(mid_y / radius))
+    else:
+        kx = 1.0  # polar stereographic near the pole: true to size within 0.01%
     slope = block_max(slope_deg(dem, cell, cell * kx), step)
     rough = roughness(dem, step)
     height = dem[: slope.shape[0] * step, : slope.shape[1] * step].reshape(
         slope.shape[0], step, slope.shape[1], step).mean(axis=(1, 3)).astype("float32")
-    zone, _ = classify(slope, rules)
+    gfile = ROOT / "data" / name / "ground.npz"
+    ground = np.load(gfile)["ground"][: slope.shape[0], : slope.shape[1]] if gfile.exists() else None
+    if ground is None:
+        print("no ground-type map for this site, default slope limit everywhere")
+    zone, _ = classify(slope, rules, ground)
+    efile = ROOT / "data" / name / "slope_err.tif"
+    slope_err = None
+    if efile.exists():
+        with rasterio.open(efile) as src:
+            slope_err = block_max(src.read(1).astype("float32"), step)[: slope.shape[0], : slope.shape[1]]
     out = ROOT / "data" / name / "layers.npz"
     np.savez_compressed(out, slope=slope, rough=rough, height=height, zone=zone, kx=kx,
+                        ground=ground if ground is not None else np.zeros_like(zone),
+                        slope_err=slope_err if slope_err is not None else np.full(slope.shape, np.nan, "float32"),
+                        radius=radius, body=cfg.get("body", "mars"),
                         transform=np.array(transform)[:6], crs=str(crs))
-    print(f"east-west cell size = {kx:.4f} x north-south (latitude {mid_lat:.2f} deg)")
+    print(f"{name}: cell {k} m, east-west scale {kx:.4f}")
     print(f"grid {zone.shape} at {k} m | GO {np.mean(zone==GO):.1%}  CAUTION {np.mean(zone==CAUTION):.1%}  NO-GO {np.mean(zone==NOGO):.1%}")
     print(f"slope p50 {np.nanpercentile(slope,50):.1f}  p95 {np.nanpercentile(slope,95):.1f}  max {np.nanmax(slope):.1f} deg | height {np.nanmin(height):.0f}..{np.nanmax(height):.0f} m")
     return out
