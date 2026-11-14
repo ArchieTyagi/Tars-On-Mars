@@ -24,11 +24,15 @@ GROUND = ["default", "bedrock", "regolith", "sand"]  # same order as pipeline/ge
 def classify(slope, rules, ground=None, limit_override=None):
     """GO / CAUTION / NO-GO for every cell.
     ground = optional grid of ground-type codes (index into GROUND).
-    limit_override = the what-if slider: one limit everywhere, ground types ignored."""
-    lim = np.full(slope.shape, float(limit_override or rules["slope_limit_deg"]["default"]), "float32")
-    if ground is not None and limit_override is None:
+    limit_override = the what-if slider, the limit on firm ground (default/bedrock). Looser ground
+    keeps its proportion: with the slider at 30 (1.5x the normal 20), sand goes from 10 to 15, never
+    to 30. So the slider can never make sand as steep as rock."""
+    base = float(rules["slope_limit_deg"]["default"])
+    scale = 1.0 if limit_override is None else float(limit_override) / base
+    lim = np.full(slope.shape, base * scale, "float32")
+    if ground is not None:
         for i, name in enumerate(GROUND):
-            lim[ground == i] = rules["slope_limit_deg"].get(name, rules["slope_limit_deg"]["default"])
+            lim[ground == i] = rules["slope_limit_deg"].get(name, base) * scale
     zone = np.full(slope.shape, GO, "uint8")
     zone[slope >= lim * rules["caution_from"]] = CAUTION
     zone[(slope >= lim) | np.isnan(slope)] = NOGO
