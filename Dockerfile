@@ -19,6 +19,7 @@ COPY assets/ assets/
 COPY data/jezero/layers.npz data/jezero/layers.npz
 COPY data/moon/layers.npz data/moon/layers.npz
 COPY data/jezero/minerals.npz data/jezero/minerals.npz
+COPY data/jezero/photo.npz data/jezero/photo.npz
 COPY --from=web /web/dist frontend/dist
 ENV PORT=7860
 EXPOSE 7860
