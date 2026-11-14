@@ -162,17 +162,27 @@ class Site:
         pts = [self.lonlat_to_cell(*base)] + [self.lonlat_to_cell(*s) for s in stops]
         for i, p in enumerate(pts):
             self._check(p, "base" if i == 0 else f"stop {i}")
+        for i in range(1, len(pts)):
+            for j in range(i):
+                if pts[i] == pts[j]:
+                    where = "the base" if j == 0 else f"stop {j}"
+                    raise ValueError(f"Stop {i} is the same spot as {where}. Remove it or move it.")
 
         costs = np.where(self.cost < 0, np.inf, self.cost)
-        mcps, table = [], np.full((len(pts), len(pts)), np.inf)
+        mcps, table, reach = [], np.full((len(pts), len(pts)), np.inf), []
         for i, p in enumerate(pts):
             m = self._mcp(costs)
             cum, _ = m.find_costs([p])
             mcps.append(m)
+            reach.append(int(np.isfinite(cum).sum()))  # how many cells you can get to from here
             for j, q in enumerate(pts):
                 table[i, j] = cum[q]
         if not np.isfinite(table).all():
             bad = [i for i in range(1, len(pts)) if not np.isfinite(table[0, i])]
+            if bad and all(reach[0] < reach[i] for i in bad):
+                area = reach[0] * self.dx * self.dy
+                raise ValueError(f"The base is boxed in by NO-GO ground (only about {area:,.0f} square meters "
+                                 "reachable from it). Move the base.")
             names = ", ".join(f"stop {i}" for i in bad)
             raise ValueError(f"There's no safe way to reach {names} from base with these slope limits. "
                              "Move it, or try a higher slope limit to see what blocks it.")
@@ -182,15 +192,18 @@ class Site:
         order = (0,) + best + (0,)
 
         legs, full, arrive = [], [], []
+        raw_km = raw_h = 0.0
         for a, b in zip(order, order[1:]):
             path = mcps[a].traceback(pts[b])
             dist, hrs, smax, caut = self.leg_stats(path)
+            raw_km += dist / 1000
+            raw_h += hrs
             legs.append({"from": a, "to": b, "km": round(dist / 1000, 2), "hours": round(hrs, 2),
                          "max_slope": round(smax, 1), "caution_cells": caut})
             full += path if not full else path[1:]
             arrive.append(len(full) - 1)  # index where this leg ends (a stop, or base at the very end)
 
-        walk_hours = sum(l["hours"] for l in legs)
+        walk_hours = raw_h  # exact sum; the per-leg numbers are rounded for display
         stop_h = float(self.rules.get("stop_minutes", 0)) / 60.0
         n_stops = len(pts) - 1
         hours = walk_hours + n_stops * stop_h  # whole outing: walking + time spent working at each stop
@@ -237,7 +250,7 @@ class Site:
                 stop_minerals.append({"stop": i, "mineral": n, "confidence": conf})
         return {
             "order": list(best),
-            "km": round(sum(l["km"] for l in legs), 2),
+            "km": round(raw_km, 2),
             "hours": round(hours, 2),
             "walk_hours": round(walk_hours, 2),
             "stop_hours": round(n_stops * stop_h, 2),

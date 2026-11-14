@@ -26,8 +26,15 @@ def test_plan_bad_stop_gives_clear_error():
 
 def test_slider_changes_route_risk():
     a = c.post("/api/plan", json={"base": BASE, "stops": [[77.43, 18.485]]}).json()
-    b = c.post("/api/plan", json={"base": BASE, "stops": [[77.43, 18.485]], "slope_limit": 12}).json()
-    assert b["max_slope"] <= 12 <= a["max_slope"] or b["km"] >= a["km"]
+    b = c.post("/api/plan", json={"base": BASE, "stops": [[77.43, 18.485]], "slope_limit": 16}).json()
+    from api.main import site
+    s = site(16, "jezero")
+    cells = [s.lonlat_to_cell(*p) for p in b["path"]]
+    assert all(s.slope[r, c_] < s.limit[r, c_] for r, c_ in cells)  # every point under its own (scaled) limit
+    assert b["max_slope"] < 16 and a["max_slope"] < 20
+    # stricter still: sand and delta fan get stricter with it, so this stop is cut off, with a clear reason
+    r = c.post("/api/plan", json={"base": BASE, "stops": [[77.43, 18.485]], "slope_limit": 12})
+    assert r.status_code == 422 and "no safe way" in r.json()["detail"]
 
 
 def test_layers_are_png():
@@ -160,3 +167,17 @@ def test_night_start_is_not_called_sunset():
     assert j["light"]["starts_in_dark"] and not j["light"]["sunset_before_home"]
     k = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47]], "ls": 0, "start_ltst_h": 16.5}).json()
     assert k["light"]["sunset_before_home"] and not k["light"]["starts_in_dark"]
+
+
+def test_same_spot_twice_and_boxed_in_base_get_clear_reasons():
+    r = c.post("/api/plan", json={"base": BASE, "stops": [[77.46, 18.47], [77.46, 18.47]]})
+    assert r.status_code == 422 and "same spot as stop 1" in r.json()["detail"]
+    r = c.post("/api/plan", json={"base": BASE, "stops": [BASE]})
+    assert r.status_code == 422 and "same spot as the base" in r.json()["detail"]
+
+
+def test_slider_keeps_sand_stricter_than_rock():
+    from api.main import site
+    s = site(30, "jezero")
+    sand = (s.ground == 3) & (s.zone != 2)
+    assert not sand.any() or float(s.slope[sand].max()) < 15.0

@@ -68,5 +68,9 @@ def test_sand_is_stricter_than_rock():
     ground = np.array([[1, 3], [2, 0]], "uint8")  # bedrock, sand / regolith, default
     zone, lim = classify(slope, rules, ground)
     assert zone[0, 0] == 0 and zone[0, 1] == 2 and zone[1, 0] == 1  # rock GO, sand NO-GO, regolith CAUTION
-    zone2, _ = classify(slope, rules, ground, limit_override=20)  # slider ignores ground
-    assert (zone2 == 0).all()
+    # the slider never makes sand as steep as rock: it scales every ground type together
+    zone2, lim2 = classify(slope, rules, ground, limit_override=20)  # 20 = the normal rules
+    assert (zone2 == zone).all() and lim2[0, 1] == 10
+    zone3, lim3 = classify(slope, rules, ground, limit_override=30)  # 1.5x: sand 15, regolith 22.5
+    assert lim3[0, 1] == 15 and lim3[1, 0] == 22.5 and lim3[0, 0] == 30
+    assert zone3[0, 1] == 1  # 12 deg sand is CAUTION now (>= 0.75 x 15), not GO
