@@ -183,6 +183,14 @@ class Site:
             ponr = {"index": i, "lonlat": self.cell_to_lonlat(*full[i]),
                     "elapsed_h": round(float(elapsed[i]), 2),
                     "note": "turn back before this point or you can't reach base on usable oxygen"}
+        light = (self.light_check(full, elapsed, ls_deg, start_ltst_h)
+                 if ls_deg is not None and start_ltst_h is not None else None)
+        from planner.scout import flight_plan, pick_targets, uncertainty
+        path_ll = [self.cell_to_lonlat(r, c) for r, c in full]
+        score, why = uncertainty(self, full, light)
+        targets = pick_targets(self, path_ll, full, score, why, elapsed)
+        scout = {"targets": targets, "uncertain_share": round(float((score > 0).mean()), 3),
+                 **flight_plan(self, base, targets, self.rules.get("scout_range_m", 700.0))}
         return {
             "order": list(best),
             "km": round(sum(l["km"] for l in legs), 2),
@@ -198,8 +206,8 @@ class Site:
             "elapsed_h": [round(float(x), 3) for x in elapsed],
             "home_h": [round(float(x), 3) if np.isfinite(x) else None for x in back],
             "slope_deg": [round(float(x), 1) if np.isfinite(x) else None for x in s],
-            "light": (self.light_check(full, elapsed, ls_deg, start_ltst_h)
-                      if ls_deg is not None and start_ltst_h is not None else None),
+            "light": light,
+            "scout": scout,
             "legs": legs,
-            "path": [self.cell_to_lonlat(r, c) for r, c in full],
+            "path": path_ll,
         }
