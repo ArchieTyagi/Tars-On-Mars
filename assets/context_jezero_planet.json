@@ -1,0 +1,16 @@
+{
+ "id": "planet",
+ "name": "Mars",
+ "about": "The whole planet, from the mosaic of Viking orbiter photos. The colors were added by its makers, they are not what a camera saw.",
+ "source": "USGS Astrogeology Science Center, Mars Viking Colorized Global Mosaic 232m (MDIM 2.1), public domain. Colorized by NASA Ames. Image data: NASA/JPL/USGS",
+ "extent_xy": {
+  "left": -10669445.55419512,
+  "top": 5334722.77709756,
+  "right": 10669445.554156877,
+  "bottom": -5334722.777078439
+ },
+ "cols": 2048,
+ "rows": 1024,
+ "m_per_px": 10419.380423999999,
+ "made_from": "1 of every 45 source rows, averaged over blocks of 45 pixels"
+}
