@@ -88,4 +88,4 @@ No NASA, JPL or USGS logos are used. This is a student project, not an official 
 
 ## Team
 
-Piyush Thakkar, Archi Tyagi
+Piyush Thakkar, Archi Tyagi, Diksha Chauhan, Anushka Sharma
