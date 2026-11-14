@@ -14,19 +14,63 @@ from pydantic import BaseModel, Field
 from planner.route import Site
 
 app = FastAPI(title="TARS on Mars")
+
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+
+FIELD_NAMES = {"base": "base", "stops": "stops", "slope_limit": "slope limit", "o2_hours": "oxygen supply",
+               "o2_reserve": "oxygen reserve", "walk_speed_kmh": "walking speed", "ls": "season (Ls)",
+               "start_ltst_h": "start time", "base_antenna_m": "base antenna height",
+               "suit_antenna_m": "suit antenna height", "lonlat": "position", "finding": "finding",
+               "radius_m": "radius", "lon": "longitude", "lat": "latitude"}
+
+
+@app.exception_handler(RequestValidationError)
+async def readable_errors(request, exc):
+    msgs = []
+    for e in exc.errors():
+        loc = [str(x) for x in e.get("loc", []) if x not in ("body", "query")]
+        field = FIELD_NAMES.get(loc[0], loc[0]) if loc else "input"
+        t, ctx = e.get("type", ""), e.get("ctx", {}) or {}
+        if t == "too_long":
+            msg = f"Too many {field}: at most {ctx.get('max_length')}."
+        elif t == "too_short":
+            msg = f"Add at least {ctx.get('min_length')} {field[:-1] if field.endswith('s') else field}."
+        elif t in ("greater_than", "greater_than_equal"):
+            msg = f"The {field} must be at least {ctx.get('gt', ctx.get('ge'))}."
+        elif t in ("less_than", "less_than_equal"):
+            msg = f"The {field} must be below {ctx.get('lt', ctx.get('le'))}."
+        elif t.endswith("parsing") or t.endswith("_type"):
+            msg = f"The {field} must be a number."
+        elif t == "missing":
+            msg = f"The {field} is missing."
+        else:
+            msg = f"Check the {field}: {e.get('msg')}."
+        msgs.append(msg)
+    return JSONResponse(status_code=422, content={"detail": " ".join(dict.fromkeys(msgs))})
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 SITES = ["jezero", "moon"]
 
 
-@lru_cache(maxsize=16)
-def site(limit: Optional[float] = None, name: str = "jezero") -> Site:
-    if name not in SITES:
-        raise HTTPException(404, f"unknown site {name}, try one of {SITES}")
-    s = Site(name)
+@lru_cache(maxsize=len(SITES))
+def base_site(name: str) -> Site:
+    return Site(name)
+
+
+@lru_cache(maxsize=8)
+def _limited(limit: float, name: str) -> Site:
+    import copy
+    s = copy.copy(base_site(name))  # shares the big arrays, only zones/cost/limit are new
     s.set_limit(limit)
     return s
+
+
+def site(limit: Optional[float] = None, name: str = "jezero") -> Site:
+    if name not in SITES:
+        raise HTTPException(404, f"Unknown site '{name}'. Try one of: {', '.join(SITES)}.")
+    return base_site(name) if limit is None else _limited(round(float(limit), 1), name)
 
 
 def site_cfg(name):
@@ -85,6 +129,20 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/convert")
+def convert(site_id: str = Query("jezero", alias="site"), lon: Optional[float] = None, lat: Optional[float] = None,
+            x: Optional[float] = None, y: Optional[float] = None):
+    """lon/lat <-> map meters for a site. Needed to draw polar maps (the Moon) on a flat screen."""
+    s = site(None, site_id)
+    if lon is not None and lat is not None:
+        xx, yy = s._to_xy.transform(lon, lat)
+        return {"x": xx, "y": yy}
+    if x is not None and y is not None:
+        lo, la = s._to_ll.transform(x, y)
+        return {"lon": lo, "lat": la}
+    raise HTTPException(422, "Give lon and lat, or x and y.")
+
+
 @app.get("/api/sites")
 def sites():
     return [{"id": n, "name": site_cfg(n)["name"], "body": site_cfg(n).get("body", "mars")} for n in SITES]
@@ -104,13 +162,19 @@ def site_info(site_id: str = Query("jezero", alias="site")):
             "default_base": cfg.get("default_base") or list(s.cell_to_lonlat(*mid)),
             "has_ground_types": s.ground is not None and bool(s.ground.any()),
             "has_slope_error": s.slope_err is not None,
+            "has_minerals": getattr(s, "minerals", None) is not None,
             "sun_check": s.body == "mars",
+            "crs": s.crs,
+            "extent_xy": {"left": s.x0, "top": s.y0, "right": s.x0 + s.a * s.zone.shape[1],
+                          "bottom": s.y0 + s.e * s.zone.shape[0]},
             "source": cfg.get("source")}
 
 
 @app.post("/api/plan")
 def plan(req: PlanIn):
-    s = site(round(req.slope_limit, 1) if req.slope_limit else None, req.site)
+    if (req.ls is None) != (req.start_ltst_h is None):
+        raise HTTPException(422, "For the sun check give both the season (Ls) and the start time, or neither.")
+    s = site(req.slope_limit, req.site)
     obs = OBSERVATIONS.get(req.site, [])
     if obs:
         from planner.scout import apply_observations
@@ -156,8 +220,13 @@ def point(lon: float, lat: float, site_id: str = Query("jezero", alias="site")):
     h = float(s.height[r, c])
     sl = float(s.slope[r, c])
     err = None if s.slope_err is None or np.isnan(s.slope_err[r, c]) else round(float(s.slope_err[r, c]), 1)
+    mineral = conf = None
+    if getattr(s, "minerals", None) is not None:
+        from pipeline.minerals import name_of
+        mineral, conf = name_of(int(s.minerals[r, c]))
     return {"inside": True, "height_m": None if np.isnan(h) else round(h, 1),
             "slope_deg": None if np.isnan(sl) else round(sl, 1), "slope_err_deg": err,
+            "mineral": mineral, "mineral_confidence": conf,
             "zone": names[int(s.zone[r, c])]}
 
 
@@ -187,6 +256,29 @@ def sun(ls: float, ltst_h: float, site_id: str = Query("jezero", alias="site")):
     return {"elevation_deg": round(el, 2), "azimuth_deg": round(az, 2), "up": el > 0}
 
 
+@app.get("/api/weather")
+def weather(ls: float = Query(..., ge=0, lt=360)):
+    """Typical Jezero weather by hour for a season, from Perseverance's MEDA station."""
+    from pipeline.weather import SEASONS, load, season_of
+    w = load()
+    if w is None:
+        raise HTTPException(503, "Weather table not built yet (python -m pipeline.weather_build).")
+    k = season_of(ls)
+    return {"season": SEASONS[k][1], "units": w["units"], "source": w["source"],
+            "hours": list(range(24)), **w["seasons"][str(k)],
+            "note": "typical conditions, not a forecast; hours are Mars local solar time",
+            "wind_note": (None if any(v is not None for v in w["seasons"][str(k)]["wind"]["mean"]) else
+                          "no wind data for this season: MEDA's wind sensors were damaged by wind-blown sand "
+                          "after sol 313 and processed wind is only published for earlier sols")}
+
+
+@app.get("/api/sol_to_ls")
+def sol_to_ls(sol: float = Query(..., ge=0)):
+    """Season (Ls) for a Perseverance mission sol, Allison & McEwen 2000."""
+    from pipeline.mars_time import ls_from_m20_sol, utc_from_m20_sol
+    return {"sol": sol, "ls": round(ls_from_m20_sol(sol), 2), "utc": utc_from_m20_sol(sol).isoformat()}
+
+
 @app.get("/api/terrain")
 def terrain(step: int = 4, site_id: str = Query("jezero", alias="site")):
     """Height grid for the 3D view, every `step` cells (4 = 16 m spacing on Jezero).
@@ -210,6 +302,30 @@ def zones(slope_limit: Optional[float] = None, site_id: str = Query("jezero", al
     return png(rgba)
 
 
+@app.get("/api/minerals")
+def minerals_legend():
+    """Legend for the mineral layer, with the authors' own caveat."""
+    from pipeline.minerals import CAVEAT, KEY
+    return {"classes": [{"code": i, "name": n, "rgb_high": list(hi), "rgb_medium": list(med)}
+                        for i, (n, hi, med) in enumerate(KEY, start=1)],
+            "caveat": CAVEAT,
+            "source": "Parente, Saranathan, Itoh, Tarnas, Seelos, Mustard (2021), Zenodo 10.5281/zenodo.5575824, CC BY 4.0"}
+
+
+@app.get("/api/layers/minerals.png")
+def minerals_layer(site_id: str = Query("jezero", alias="site")):
+    s = site(None, site_id)
+    if getattr(s, "minerals", None) is None:
+        raise HTTPException(404, "No mineral map for this site.")
+    from pipeline.minerals import KEY
+    m = s.minerals
+    rgba = np.zeros(m.shape + (4,), "uint8")
+    for i, (_, hi, med) in enumerate(KEY, start=1):
+        rgba[m == i] = (*hi, 200)
+        rgba[m == 100 + i] = (*med, 150)
+    return png(rgba)
+
+
 @app.get("/api/layers/hillshade.png")
 def hillshade(site_id: str = Query("jezero", alias="site")):
     s = site(None, site_id)
@@ -226,3 +342,12 @@ def safe_range(lon: float, lat: float, site_id: str = Query("jezero", alias="sit
     rgba = np.zeros(ok.shape + (4,), "uint8")
     rgba[~ok] = (0, 0, 0, 140)  # darken what you can't reach and come back from
     return png(rgba)
+
+
+# serve the built frontend from the same server when it exists (one public link for everything)
+from pathlib import Path as _P  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_DIST = _P(__file__).resolve().parents[1] / "frontend" / "dist"
+if _DIST.exists():
+    app.mount("/", StaticFiles(directory=_DIST, html=True), name="web")
