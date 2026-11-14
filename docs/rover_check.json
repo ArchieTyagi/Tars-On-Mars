@@ -1,27 +1,27 @@
 {
- "rover_squares_on_map": 4355,
+ "rover_squares_on_map": 4353,
  "sols": [
   14,
   731
  ],
  "limit_20": {
-  "go": 0.9866819747416762,
-  "caution": 0.010562571756601608,
-  "nogo_false_alarm": 0.0027554535017221583
+  "go": 0.9859866758557316,
+  "caution": 0.011256604640477832,
+  "nogo_false_alarm": 0.0027567195037904893
  },
  "limit_15": {
-  "go": 0.9419058553386912,
-  "caution": 0.04477611940298507,
-  "nogo_false_alarm": 0.013318025258323766
+  "go": 0.9375143579140822,
+  "caution": 0.04847231794164944,
+  "nogo_false_alarm": 0.01401332414426832
  },
  "rover_stops_on_map": 201,
  "tilt_vs_slope": {
   "rover_tilt_median": 3.110411162,
   "rover_tilt_max": 20.33445677,
-  "our_1m_slope_median": 3.1132750511169434,
-  "our_planning_slope_median": 4.486283302307129,
-  "corr_1m": 0.8677545577656579,
-  "mean_abs_err_1m_deg": 1.4648594912872726,
-  "planning_slope_ge_rover_tilt": 0.8009950248756219
+  "our_1m_slope_median": 3.232544422149658,
+  "our_planning_slope_median": 4.592354774475098,
+  "corr_1m": 0.867056059582126,
+  "mean_abs_err_1m_deg": 1.488071759346253,
+  "planning_slope_ge_rover_tilt": 0.8109452736318408
  }
 }

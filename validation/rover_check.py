@@ -15,7 +15,7 @@ import numpy as np
 import rasterio
 from matplotlib.colors import LightSource, ListedColormap
 
-from pipeline.layers import slope_deg
+from pipeline.layers import ground_scale_x, slope_deg
 from planner.route import Site
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +28,7 @@ def drive_points(site, step_m=2.0):
     for f in json.load(open(ROVER / "M20_traverse.json"))["features"]:
         c = np.array(f["geometry"]["coordinates"])[:, :2]
         for a, b in zip(c[:-1], c[1:]):
-            n = max(2, int(np.hypot(*(b - a)) / 0.00034 * 20 / step_m))  # ~20 m per 0.00034 deg
+            n = max(2, int(np.hypot(*(b - a)) * 59275 / step_m))  # 1 deg on Mars = ~59.3 km
             for t in np.linspace(0, 1, n, endpoint=False):
                 pts.append(a + t * (b - a)); sols.append(f["properties"]["sol"])
     pts = np.array(pts)
@@ -54,7 +54,7 @@ def main():
     # slope vs rover tilt at stops
     with rasterio.open(ROOT / "data" / "jezero" / "dtm.tif") as src:
         dem, tr = src.read(1), src.transform
-    s1 = slope_deg(dem, 1.0)
+    s1 = slope_deg(dem, 1.0, ground_scale_x(18.45))
     rows = []
     for f in json.load(open(ROVER / "M20_waypoints.json"))["features"]:
         p = f["properties"]
