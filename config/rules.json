@@ -22,5 +22,7 @@
     "Upper etched unit": "bedrock",
     "Crater rim unit": "bedrock",
     "_default": "default"
-  }
+  },
+  "base_antenna_m": 3.0,
+  "suit_antenna_m": 2.0
 }

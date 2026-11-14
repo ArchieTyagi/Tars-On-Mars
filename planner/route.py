@@ -191,6 +191,9 @@ class Site:
         targets = pick_targets(self, path_ll, full, score, why, elapsed)
         scout = {"targets": targets, "uncertain_share": round(float((score > 0).mean()), 3),
                  **flight_plan(self, base, targets, self.rules.get("scout_range_m", 700.0))}
+        from planner.radio import route_contact
+        radio = route_contact(self, pts[0], full, elapsed,
+                              float(self.rules.get("base_antenna_m", 3.0)), float(self.rules.get("suit_antenna_m", 2.0)))
         return {
             "order": list(best),
             "km": round(sum(l["km"] for l in legs), 2),
@@ -208,6 +211,7 @@ class Site:
             "slope_deg": [round(float(x), 1) if np.isfinite(x) else None for x in s],
             "light": light,
             "scout": scout,
+            "radio": radio,
             "legs": legs,
             "path": path_ll,
         }
