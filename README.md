@@ -5,9 +5,7 @@ Plan a Mars walk: route, time, oxygen.
 **Try it live: https://tars-on-mars.vercel.app**
 
 The engine behind it runs on a small free server, so a plan takes around 15 seconds. To run it fast on your own machine, see the run steps below.
-
 NASA Space Apps Challenge 2026, challenge "Interplanetary Survival Guide: Martian Map". Team TARS on Mars, Ahmedabad local event.
-
 You put down a base and a few stops at Jezero Crater. It finds the safest walking loop, tells you how long it takes, whether it fits your oxygen, and where the point of no return is (past it you can't make it home). It also checks the sun along the walk, where you lose radio contact with base, and which parts of the route a scout helicopter should look at first.
 
 ## How it works
